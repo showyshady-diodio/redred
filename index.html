@@ -7,7 +7,7 @@
   <title>账号与设备管理</title>
   <style>
     :root{font-family:Inter,"Microsoft YaHei",sans-serif;color:#1b2630;background:#f4f6f8;font-synthesis:none}
-    *{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}
+    *{box-sizing:border-box} [hidden]{display:none!important} body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}
     .shell{max-width:1180px;margin:auto;padding:32px 24px 56px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px}
     h1{font-size:26px;margin:0 0 6px}.sub{color:#6c7781;font-size:14px}.badge{font-size:12px;padding:6px 10px;border-radius:20px;background:#e8f2ee;color:#24684a}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}.stat,.panel{background:white;border:1px solid #e4e8eb;border-radius:12px}.stat{padding:16px 18px}.stat-label{color:#71808a;font-size:13px}.stat-value{font-size:24px;font-weight:650;margin-top:8px}
@@ -65,44 +65,48 @@
   <dialog id="dialog"><form class="form" id="form"><h2 id="formTitle"></h2><div class="fields" id="fields"></div><div class="form-actions"><button type="button" class="secondary" id="cancel">取消</button><button class="primary">保存</button></div></form></dialog>
   <script type="module">
     const labels = { active:"正常", paused:"暂停", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束", unpaired:"未接入", online:"在线", offline:"离线", attention:"需检查" };
-    const state = { view:"accounts", accounts:[], devices:[], sessions:[] };
+    const state = { view:"accounts", accounts:[], devices:[], sessions:[], loadError:false };
     const $ = (s) => document.querySelector(s);
     const safe = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     async function api(path, options={}) {
       const response = await fetch(`/api/${path}`, { headers:{"content-type":"application/json"}, ...options });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      if (!response.ok) throw new Error([data.error || `Request failed (${response.status})`,data.detail].filter(Boolean).join("\n"));
       return data;
     }
     async function refresh() {
       try {
         [state.accounts,state.devices,state.sessions] = await Promise.all([api("accounts"),api("devices"),api("sessions")]);
+        state.loadError=false;
         render();
       } catch (e) {
-        $("#rows").innerHTML = `<tr><td class="empty" colspan="8">${safe(e.message)}。请确认已配置 Cloudflare D1。</td></tr>`;
+        state.loadError=true;
+        console.error("Failed to load account-management data",e);
+        render();
       }
     }
     const date = value => value ? new Date(value.replace(" ","T")+"Z").toLocaleString("zh-CN",{hour12:false}) : "—";
     function pill(status) { return `<span class="pill ${safe(status)}">${safe(labels[status] || status)}</span>`; }
     function render() {
-      $("#accountCount").textContent=state.accounts.length; $("#deviceCount").textContent=state.devices.length;
-      $("#sessionCount").textContent=state.sessions.filter(s=>s.status==="active").length;
+      $("#accountCount").textContent=state.loadError?"—":state.accounts.length; $("#deviceCount").textContent=state.loadError?"—":state.devices.length;
+      $("#sessionCount").textContent=state.loadError?"—":state.sessions.filter(s=>s.status==="active").length;
       const q=$("#search").value.trim().toLowerCase();
       const configs={
-        accounts:{title:"工作账号",placeholder:"搜索手机号或显示名称",add:"添加工作账号",cols:["工作账号手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code||'')}${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td><button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${x.id}" data-kind="accounts">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
+        accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td><button class="secondary" data-edit-account="${x.id}">编辑名称</button> <button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${x.id}" data-kind="accounts">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
         devices:{title:"设备",placeholder:"搜索设备",add:"登记设备",cols:["设备名称","厂商 / 型号","系统版本","连接状态","最后在线","电量","设备状态","操作"],data:state.devices.filter(x=>`${x.name} ${x.manufacturer} ${x.model} ${x.os} ${x.os_version} ${x.agent_name}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.name)}${x.agent_name?`<div class="sub">连接器：${safe(x.agent_name)}</div>`:""}</td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||"—"}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||"—"}</td><td>${pill(x.connection_status||'unpaired')}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}</td><td>${pill(x.status)}</td><td><button class="secondary" data-status="${x.status==='disabled'?'available':'disabled'}" data-id="${x.id}" data-kind="devices">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
         sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"登记登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?`<button class="secondary" data-status="ended" data-id="${x.id}" data-kind="sessions">结束记录</button> <button class="secondary" data-status="verification_needed" data-id="${x.id}" data-kind="sessions">需验证</button>`:"—"}</td></tr>`}
       };
       const c=configs[state.view]; $("#viewTitle").textContent=c.title; $("#search").placeholder=c.placeholder; $("#addButton").textContent=c.add;
       $("#viewNotice").textContent=state.view==="accounts"?"手机号（国家/地区号 + 手机号）作为工作账号主体。当前不做号码格式正则校验；请勿在此录入密码、Cookie 或验证码。":state.view==="devices"?"网页不能直接读取朋友电脑上通过 USB 连接的设备。设备在线状态和遥测信息需要朋友运行本地连接器，由连接器经认证 HTTPS 主动上报到共享云端；当前先登记设备资料，连接器接口待开发朋友提供。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
       $("#head").innerHTML=`<tr>${c.cols.map(t=>`<th>${t}</th>`).join("")}</tr>`;
-      $("#rows").innerHTML=c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">暂无记录。使用“${c.add}”开始登记。</td></tr>`;
+      $("#rows").innerHTML=state.loadError?`<tr><td class="empty" colspan="${c.cols.length}">暂时无法加载数据。<button class="secondary" id="retryLoad">重试</button></td></tr>`:c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">暂无记录。使用“${c.add}”开始登记。</td></tr>`;
     }
-    function openForm() {
+    function openForm(account=null) {
       const fields=$("#fields"); fields.innerHTML="";
       const add=(label,name,placeholder="",type="text",required=false)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<input name="${name}" type="${type}" placeholder="${placeholder}" ${required?'required':''}></label>`)};
       const select=(label,name,items)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<select name="${name}">${items.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></label>`)};
-      if(state.view==="accounts") { $("#formTitle").textContent="添加工作账号"; select("国家 / 地区号","phone_country_code",[["+86","中国大陆 +86"],["+852","中国香港 +852"],["+853","中国澳门 +853"],["+886","中国台湾 +886"],["+1","美国 / 加拿大 +1"],["+44","英国 +44"],["+61","澳大利亚 +61"],["+81","日本 +81"],["+82","韩国 +82"],["+65","新加坡 +65"],["+60","马来西亚 +60"],["+other","其他 / 自定义"]]); fields.insertAdjacentHTML("beforeend","<label id='customCodeLabel' hidden>自定义国家 / 地区号<input name='custom_country_code' placeholder='+33'></label>"); add("手机号","phone_number","输入号码，不做格式正则校验","tel",true); add("显示名称","display_name"); add("备注","notes"); }
+      if(state.view==="accounts" && account) { $("#formTitle").textContent="编辑显示名称"; add("显示名称","display_name","","text",false); }
+      else if(state.view==="accounts") { $("#formTitle").textContent="添加工作账号"; select("国家 / 地区号","phone_country_code",[["+86","中国大陆 +86"],["+852","中国香港 +852"],["+853","中国澳门 +853"],["+886","中国台湾 +886"],["+1","美国 / 加拿大 +1"],["+44","英国 +44"],["+61","澳大利亚 +61"],["+81","日本 +81"],["+82","韩国 +82"],["+65","新加坡 +65"],["+60","马来西亚 +60"],["+other","其他 / 自定义"]]); fields.insertAdjacentHTML("beforeend","<label id='customCodeLabel' hidden>自定义国家 / 地区号<input name='custom_country_code' placeholder='+33'></label>"); add("手机号","phone_number","输入号码，不做格式正则校验","tel",true); add("显示名称","display_name"); add("备注","notes"); }
       if(state.view==="devices") { $("#formTitle").textContent="登记设备"; add("设备名称","name","如：朋友工作机 01","text",true); add("设备厂商","manufacturer"); add("型号","model"); add("系统","os","如：Android"); add("系统版本","os_version"); add("备注","notes"); fields.insertAdjacentHTML("beforeend","<div class='notice'>连接状态、电量、分辨率和最后在线时间将由后续的本地连接器上报；网页本身不能扫描远端电脑的 USB / ADB 设备。</div>"); }
       if(state.view==="sessions") {
         $("#formTitle").textContent="登记登录";
@@ -114,11 +118,13 @@
       $("#dialog").showModal();
     }
     document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===b));render();}));
-    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",openForm); $("#cancel").addEventListener("click",()=>$("#dialog").close());
+    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",()=>{editingAccountId=null;openForm();}); $("#cancel").addEventListener("click",()=>{editingAccountId=null;$("#dialog").close();});
+    $("#rows").addEventListener("click",e=>{if(e.target.closest("#retryLoad"))refresh();});
     $("#copyContract").addEventListener("click",async()=>{try{await navigator.clipboard.writeText($("#deviceContract").textContent.trim());$("#copyStatus").textContent="示例 JSON 已复制。当前它是字段草案，不是可调用的 API 请求。";}catch{$("#copyStatus").textContent="浏览器未允许剪贴板访问，请手动复制上方 JSON。";}});
     $("#fields").addEventListener("change",e=>{if(e.target.name==="phone_country_code"){$("#customCodeLabel").hidden=e.target.value!=="+other";}});
-    $("#form").addEventListener("submit",async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.currentTarget));if(data.phone_country_code==="+other")data.phone_country_code=data.custom_country_code.trim();delete data.custom_country_code;try{await api(state.view,{method:"POST",body:JSON.stringify(data)});$("#dialog").close();e.currentTarget.reset();await refresh();}catch(err){alert(err.message);}});
-    $("#rows").addEventListener("click",async e=>{const b=e.target.closest("button[data-id]");if(!b)return;try{await api(`${b.dataset.kind}/${b.dataset.id}`,{method:"PATCH",body:JSON.stringify({status:b.dataset.status})});await refresh();}catch(err){alert(err.message);}});
+    let editingAccountId=null;
+    $("#form").addEventListener("submit",async e=>{e.preventDefault();const form=e.currentTarget;const data=Object.fromEntries(new FormData(form));if(data.phone_country_code==="+other")data.phone_country_code=data.custom_country_code.trim();delete data.custom_country_code;try{if(editingAccountId){await api(`accounts/${editingAccountId}`,{method:"PATCH",body:JSON.stringify({display_name:data.display_name||""})});editingAccountId=null;}else{await api(state.view,{method:"POST",body:JSON.stringify(data)});}$("#dialog").close();form.reset();await refresh();}catch(err){alert(err.message);}});
+    $("#rows").addEventListener("click",async e=>{const edit=e.target.closest("button[data-edit-account]");if(edit){const account=state.accounts.find(x=>x.id===edit.dataset.editAccount);if(!account)return;editingAccountId=account.id;openForm(account);$("#fields input[name='display_name']").value=account.display_name||"";return;}const b=e.target.closest("button[data-id]");if(!b)return;try{await api(`${b.dataset.kind}/${b.dataset.id}`,{method:"PATCH",body:JSON.stringify({status:b.dataset.status})});await refresh();}catch(err){alert(err.message);}});
     refresh();
   </script>
 </body>
