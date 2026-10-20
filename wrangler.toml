@@ -1,0 +1,8 @@
+name = "mcn-account-management"
+compatibility_date = "2026-10-20"
+pages_build_output_dir = "."
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mcn-account-management"
+database_id = "d419f8a9-ed62-4b1b-9d90-271c0d41f29d"
