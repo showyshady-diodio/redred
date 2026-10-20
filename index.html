@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>账号与设备管理</title>
+  <style>
+    :root{font-family:Inter,"Microsoft YaHei",sans-serif;color:#1b2630;background:#f4f6f8;font-synthesis:none}
+    *{box-sizing:border-box}body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}
+    .shell{max-width:1180px;margin:auto;padding:32px 24px 56px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px}
+    h1{font-size:26px;margin:0 0 6px}.sub{color:#6c7781;font-size:14px}.badge{font-size:12px;padding:6px 10px;border-radius:20px;background:#e8f2ee;color:#24684a}
+    .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}.stat,.panel{background:white;border:1px solid #e4e8eb;border-radius:12px}.stat{padding:16px 18px}.stat-label{color:#71808a;font-size:13px}.stat-value{font-size:24px;font-weight:650;margin-top:8px}
+    .tabs{display:flex;gap:8px;border-bottom:1px solid #dfe4e8;margin-bottom:18px}.tab{border:0;background:transparent;padding:12px 16px;color:#68747d;border-bottom:2px solid transparent}.tab.active{color:#176b50;border-color:#176b50;font-weight:600}
+    .panel{padding:18px;margin-bottom:16px}.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.bar h2{font-size:17px;margin:0}.controls{display:flex;gap:8px;align-items:center}
+    input,select,textarea{border:1px solid #d8dfe3;border-radius:7px;padding:9px 11px;background:#fff;color:#1b2630}input:focus,select:focus,textarea:focus{outline:2px solid #b5decc;border-color:#62a989}input.search{min-width:220px}
+    .primary{border:0;border-radius:7px;padding:10px 14px;background:#176b50;color:white;font-weight:600}.secondary{border:1px solid #d5dde1;border-radius:7px;padding:8px 11px;background:white;color:#31414a}.danger{color:#9a4a37}
+    table{width:100%;border-collapse:collapse;font-size:14px}th{text-align:left;color:#74808a;font-weight:500;font-size:12px;padding:10px;border-bottom:1px solid #e8ecee}td{padding:13px 10px;border-bottom:1px solid #edf0f2;vertical-align:middle}tr:last-child td{border-bottom:0}.empty{text-align:center;color:#89949b;padding:34px 10px}
+    .pill{display:inline-block;padding:4px 8px;border-radius:14px;font-size:12px;background:#edf1f3;color:#53616a}.pill.active,.pill.available{background:#e8f2ee;color:#24684a}.pill.verification_needed,.pill.maintenance{background:#fff1dd;color:#8a5c16}.pill.disabled{background:#fbe9e6;color:#a34235}
+    dialog{border:0;border-radius:12px;padding:0;width:min(460px,calc(100vw - 28px));box-shadow:0 20px 70px #17242c33}dialog::backdrop{background:#1c2c3580}.form{padding:22px}.form h2{font-size:18px;margin:0 0 18px}.fields{display:grid;gap:13px}.fields label{display:grid;gap:6px;font-size:13px;color:#58666f}.form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.notice{color:#65727b;background:#f6f8f9;padding:12px 14px;border-radius:8px;font-size:13px;line-height:1.5;margin-top:12px}
+    @media(max-width:720px){.shell{padding:22px 14px}.stats{grid-template-columns:1fr}.bar{align-items:flex-start;flex-direction:column}.controls{width:100%;flex-wrap:wrap}.controls input,.controls select{flex:1}.table-wrap{overflow:auto}table{min-width:680px}.top{align-items:flex-start;flex-direction:column}}
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="top"><div><h1>账号与设备管理</h1><div class="sub">登记工作账号、设备及人工确认的登录关系</div></div><span class="badge">基础管理</span></header>
+    <section class="stats" aria-label="统计概览">
+      <div class="stat"><div class="stat-label">工作账号</div><div class="stat-value" id="accountCount">—</div></div>
+      <div class="stat"><div class="stat-label">设备</div><div class="stat-value" id="deviceCount">—</div></div>
+      <div class="stat"><div class="stat-label">当前登录记录</div><div class="stat-value" id="sessionCount">—</div></div>
+    </section>
+    <nav class="tabs"><button class="tab active" data-view="accounts">工作账号</button><button class="tab" data-view="devices">设备</button><button class="tab" data-view="sessions">登录记录</button></nav>
+    <section class="panel">
+      <div class="bar"><h2 id="viewTitle">工作账号</h2><div class="controls"><input class="search" id="search" placeholder="搜索账号"><button class="primary" id="addButton">添加工作账号</button></div></div>
+      <div class="table-wrap"><table><thead id="head"></thead><tbody id="rows"></tbody></table></div>
+      <div class="notice">登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。此模块不执行点赞或其他平台操作。</div>
+    </section>
+  </main>
+
+  <dialog id="dialog"><form class="form" id="form"><h2 id="formTitle"></h2><div class="fields" id="fields"></div><div class="form-actions"><button type="button" class="secondary" id="cancel">取消</button><button class="primary">保存</button></div></form></dialog>
+  <script type="module">
+    const labels = { active:"正常", paused:"暂停", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束" };
+    const state = { view:"accounts", accounts:[], devices:[], sessions:[] };
+    const $ = (s) => document.querySelector(s);
+    const safe = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    async function api(path, options={}) {
+      const response = await fetch(`/api/${path}`, { headers:{"content-type":"application/json"}, ...options });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
+      return data;
+    }
+    async function refresh() {
+      try {
+        [state.accounts,state.devices,state.sessions] = await Promise.all([api("accounts"),api("devices"),api("sessions")]);
+        render();
+      } catch (e) {
+        $("#rows").innerHTML = `<tr><td class="empty" colspan="8">${safe(e.message)}。请确认已配置 Cloudflare D1。</td></tr>`;
+      }
+    }
+    const date = value => value ? new Date(value.replace(" ","T")+"Z").toLocaleString("zh-CN",{hour12:false}) : "—";
+    function pill(status) { return `<span class="pill ${safe(status)}">${safe(labels[status] || status)}</span>`; }
+    function render() {
+      $("#accountCount").textContent=state.accounts.length; $("#deviceCount").textContent=state.devices.length;
+      $("#sessionCount").textContent=state.sessions.filter(s=>s.status==="active").length;
+      const q=$("#search").value.trim().toLowerCase();
+      const configs={
+        accounts:{title:"工作账号",placeholder:"搜索账号",add:"添加工作账号",cols:["账号标识","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.handle} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.handle)}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td><button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${x.id}" data-kind="accounts">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
+        devices:{title:"设备",placeholder:"搜索设备",add:"添加设备",cols:["设备名称","型号","系统","状态","备注","操作"],data:state.devices.filter(x=>`${x.name} ${x.model} ${x.os} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.name)}</td><td>${safe(x.model)||"—"}</td><td>${safe(x.os)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td><button class="secondary" data-status="${x.status==='disabled'?'available':'disabled'}" data-id="${x.id}" data-kind="devices">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
+        sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"登记登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?`<button class="secondary" data-status="ended" data-id="${x.id}" data-kind="sessions">结束记录</button> <button class="secondary" data-status="verification_needed" data-id="${x.id}" data-kind="sessions">需验证</button>`:"—"}</td></tr>`}
+      };
+      const c=configs[state.view]; $("#viewTitle").textContent=c.title; $("#search").placeholder=c.placeholder; $("#addButton").textContent=c.add;
+      $("#head").innerHTML=`<tr>${c.cols.map(t=>`<th>${t}</th>`).join("")}</tr>`;
+      $("#rows").innerHTML=c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">暂无记录。使用“${c.add}”开始登记。</td></tr>`;
+    }
+    function openForm() {
+      const fields=$("#fields"); fields.innerHTML="";
+      const add=(label,name,placeholder="",type="text")=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<input name="${name}" type="${type}" placeholder="${placeholder}" ${name==='handle'||name==='name'?'required':''}></label>`)};
+      const select=(label,name,items)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<select name="${name}">${items.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></label>`)};
+      if(state.view==="accounts") { $("#formTitle").textContent="添加工作账号"; add("账号标识（如小红书号）","handle"); add("显示名称","display_name"); add("备注","notes"); }
+      if(state.view==="devices") { $("#formTitle").textContent="添加设备"; add("设备名称","name","如：运营机 01"); add("型号","model"); add("系统","os","如：Android / iOS"); add("备注","notes"); }
+      if(state.view==="sessions") {
+        $("#formTitle").textContent="登记登录";
+        select("工作账号","account_id",state.accounts.filter(x=>x.status!=="disabled").map(x=>[x.id,x.handle]));
+        select("设备","device_id",state.devices.filter(x=>x.status==="available").map(x=>[x.id,x.name]));
+        add("备注","note","由谁确认、异常说明等");
+        if(!state.accounts.length||!state.devices.some(x=>x.status==="available")) fields.insertAdjacentHTML("beforeend","<div class='notice'>需要先登记工作账号和可用设备。</div>");
+      }
+      $("#dialog").showModal();
+    }
+    document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===b));render();}));
+    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",openForm); $("#cancel").addEventListener("click",()=>$("#dialog").close());
+    $("#form").addEventListener("submit",async e=>{e.preventDefault();const data=Object.fromEntries(new FormData(e.currentTarget));try{await api(state.view,{method:"POST",body:JSON.stringify(data)});$("#dialog").close();e.currentTarget.reset();await refresh();}catch(err){alert(err.message);}});
+    $("#rows").addEventListener("click",async e=>{const b=e.target.closest("button[data-id]");if(!b)return;try{await api(`${b.dataset.kind}/${b.dataset.id}`,{method:"PATCH",body:JSON.stringify({status:b.dataset.status})});await refresh();}catch(err){alert(err.message);}});
+    refresh();
+  </script>
+</body>
+</html>
