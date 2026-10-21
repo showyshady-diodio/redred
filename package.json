@@ -2,7 +2,7 @@
   "name": "account-management-mvp",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22.13" },
+  "engines": { "node": ">=24.14" },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
     "connector": "node connector/adb-connector.mjs",

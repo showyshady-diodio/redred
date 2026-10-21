@@ -4,7 +4,7 @@ Minimal Cloudflare Pages + D1 application for maintaining work-account records, 
 
 ## Device auto-sync (2026-10-21)
 
-Production deployment has been verified on `https://redred-1vl.pages.dev/#devices`. Migration 0003 is already applied remotely; do not reapply it. The original account is preserved, and a real Xiaomi phone has been imported and repeatedly synced into the remote database with the same device ID. Current production deployment: `128d6e1f.redred-1vl.pages.dev`.
+Production deployment has been verified on `https://redred-1vl.pages.dev/#devices`. Migration 0003 is already applied remotely; do not reapply it. The original account is preserved, and a real Xiaomi phone has been imported and repeatedly synced into the remote database with the same device ID. The initial verified deployment was `128d6e1f.redred-1vl.pages.dev`; use the stable domain for the current production version.
 
 For the configured workstation, keep the production connector running with:
 
@@ -36,7 +36,7 @@ Run `npm run prepare:deploy` to create an allowlisted upload directory under `wo
 
 ### Local verification and connector startup
 
-Requires Node.js 22.13+ and the existing ADB executable. No connector npm dependencies are required.
+Requires Node.js 24.14+ and the existing ADB executable. No connector npm dependencies are required.
 
 ```powershell
 npm test
@@ -53,7 +53,19 @@ node connector/adb-connector.mjs --once
 node connector/adb-connector.mjs
 ```
 
-`setup:local` generates an ignored local token and local connector config; it is only for localhost testing. After deploying, change the connector's `api_url` back to the existing HTTPS domain and configure the production connector secret. Keep the connector running for continuous sync; Ctrl+C stops it. Pairing still happens through Android wireless debugging and `adb pair` before discovery. The collector does not open network ports or pair phones automatically. Reconnection requires the phone to remain reachable through ADB/mDNS.
+`setup:local` generates an ignored local token and local connector config; it is only for localhost testing. After deploying, use the separate production connector config. Keep the connector running for continuous sync; Ctrl+C stops it. Pairing still happens through Android wireless debugging and `adb pair` before discovery. The collector does not open network ports or pair phones automatically.
+
+### Automatic wireless reconnection
+
+Each collection cycle discovers `_adb-tls-connect._tcp` services and reconnects known devices using their current IP/port. The connector remembers device references and endpoints, handles a changed service suffix using the known hardware-reference hash, and retries a changed endpoint immediately. Failed unchanged endpoints back off for 30 seconds, with at most three 5-second connection attempts per cycle. Unknown devices and pairing service ports are never connected automatically. Device identity and existing database IDs are preserved across reconnects.
+
+Local and production configurations now have independent state files to avoid concurrent writes. The first run imports the previous `local-adb.json` cache automatically. If no discoverable service exists, the last known endpoint is retried, and a disconnected diagnostic is reported. The UI distinguishes a stopped connector from a running connector with an unreachable phone. Automatic recovery requires the phone to advertise wireless debugging and the local network to carry mDNS; a disabled phone-side service or isolated Wi-Fi cannot be restored by the computer alone.
+
+### Cloud connectivity and proxy settings
+
+The connector respects HTTP(S) proxy environment variables. On Windows, when no explicit proxy is set, it reads the enabled per-user system proxy so that cloud requests follow the same route as the browser. `proxy_url` can override the proxy in the ignored local config; `use_system_proxy: false` disables Windows system-proxy detection. Localhost ADB/Appium requests bypass the proxy. Certificate verification remains enabled, and proxy credentials are never printed. Restart the connector after changing proxy configuration. A cloud network error includes its cause code in the local log and will retry on later cycles; the backend marks stale telemetry offline instead of claiming that a connected phone is still reporting.
+
+The current connector is a running local process, not a Windows startup service. Computer restart still requires starting it again. Appium device sessions and task execution remain separate follow-up work.
 
 ## Scope
 

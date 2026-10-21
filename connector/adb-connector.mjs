@@ -1,14 +1,49 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import * as http from 'node:http';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { hostname } from 'node:os';
-import { dirname, resolve } from 'node:path';
+import { isIP } from 'node:net';
+import { basename, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+export function parseWindowsProxy(enabled, server) {
+  if (!/ProxyEnable\s+REG_DWORD\s+0x1\b/i.test(enabled)) return '';
+  const value = server.match(/ProxyServer\s+REG_SZ\s+(.+)/i)?.[1]?.trim() || '';
+  const entries = Object.fromEntries(value.split(';').filter(x => x.includes('=')).map(x => x.split('=')));
+  const address = entries.https || entries.http || (!value.includes('=') ? value : '');
+  if (!address) return '';
+  const url = new URL(address.includes('://') ? address : `http://${address}`);
+  if (!['http:', 'https:'].includes(url.protocol)) return '';
+  return url.href;
+}
+
+async function configureNetwork(config) {
+  let proxy = config.proxy_url || '';
+  const envProxy = process.env.https_proxy || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.HTTP_PROXY;
+  if (!proxy && !envProxy && process.platform === 'win32' && config.use_system_proxy !== false) {
+    const registry = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+    try {
+      const options = { timeout: 3000, windowsHide: true };
+      const enabled = (await exec('reg.exe', ['query', registry, '/v', 'ProxyEnable'], options)).stdout;
+      const server = (await exec('reg.exe', ['query', registry, '/v', 'ProxyServer'], options)).stdout;
+      proxy = parseWindowsProxy(enabled, server);
+    } catch { /* Missing per-user proxy settings means direct networking. */ }
+  }
+  if (!proxy && !envProxy) return;
+  if (typeof http.setGlobalProxyFromEnv !== 'function') throw new Error('Proxy support requires Node.js 24.14 or newer');
+  http.setGlobalProxyFromEnv({ ...process.env,
+    http_proxy: proxy || process.env.http_proxy || process.env.HTTP_PROXY || envProxy,
+    https_proxy: proxy || process.env.https_proxy || process.env.HTTPS_PROXY || envProxy,
+    no_proxy: [process.env.no_proxy || process.env.NO_PROXY || '', 'localhost', '127.0.0.1', '::1'].join(','),
+  });
+  console.log('Cloud sync uses the configured proxy; local ADB/Appium bypass it.');
+}
 
 export function parseDevices(output) {
   return output.split(/\r?\n/).map(line => line.trim().split(/\s+/))
@@ -40,14 +75,63 @@ const key = serial => serial.replace(/\._adb-tls-connect\._tcp\.?$/, '');
 const kind = serial => serial.startsWith('emulator-') ? 'emulator' :
   /_adb-tls|:\d+$/.test(serial) ? 'wireless' : 'usb';
 
-export async function collect(config, adb, cache) {
-  const devices = parseDevices(await adb('devices', '-l'));
-  let services = '';
-  try { services = await adb('mdns', 'services'); } catch { /* Discovery is optional for USB. */ }
-  const addresses = new Map(services.split(/\r?\n/).map(line => line.trim().split(/\s+/))
-    .filter(parts => parts[1] === '_adb-tls-connect._tcp').map(parts => [parts[0], parts[2]]));
-  const snapshots = new Map();
+export function parseServices(output) {
+  return new Map(output.split(/\r?\n/).map(line => line.trim().split(/\s+/))
+    .filter(parts => parts[1] === '_adb-tls-connect._tcp' && validEndpoint(parts[2]))
+    .map(parts => [key(parts[0]), parts[2]]));
+}
+
+function validEndpoint(value) {
+  if (typeof value !== 'string') return false;
+  const match = value.match(/^(\[[^\]]+\]|[^:]+):(\d+)$/);
+  return Boolean(match && isIP(match[1].replace(/^\[|\]$/g, '')) && Number(match[2]) > 0 && Number(match[2]) <= 65535);
+}
+
+function knownServiceRef(service, cache) {
+  if (cache.aliases[service]) return cache.aliases[service];
+  // Android may change the service suffix after restarting wireless debugging.
+  const serial = service.match(/^adb-(.+)-[^-]+$/)?.[1];
+  if (!serial) return null;
+  try {
+    const ref = deviceRef(serial);
+    return Object.values(cache.aliases).includes(ref) ? ref : null;
+  } catch { return null; }
+}
+
+export async function reconnectWireless(adb, cache, devices, addresses, now = Date.now()) {
+  cache.wireless ||= {};
+  const active = new Set(devices.filter(d => d.state === 'device').map(d => cache.aliases[key(d.serial)]).filter(Boolean));
+  for (const [service, endpoint] of addresses) {
+    const ref = knownServiceRef(service, cache);
+    if (!ref) continue;
+    const previous = cache.wireless[ref];
+    cache.wireless[ref] = { service, endpoint, retry_after: previous?.endpoint === endpoint ? previous.retry_after || 0 : 0 };
+  }
   const errors = [];
+  let attempted = 0;
+  for (const [ref, target] of Object.entries(cache.wireless)) {
+    if (active.has(ref) || !validEndpoint(target.endpoint) || now < (target.retry_after || 0)) continue;
+    if (attempted >= 3) break;
+    attempted++;
+    target.retry_after = now + 30000;
+    try {
+      const result = await adb('connect', target.endpoint);
+      if (!/^(?:already )?connected to /m.test(result)) errors.push(`Wireless reconnect pending: ${target.endpoint}`);
+    } catch { errors.push(`Wireless reconnect failed: ${target.endpoint}`); }
+  }
+  return { attempted, errors };
+}
+
+export async function collect(config, adb, cache) {
+  let devices = parseDevices(await adb('devices', '-l'));
+  let services = '';
+  let discoveryError = '';
+  try { services = await adb('mdns', 'services'); } catch { discoveryError = 'Wireless discovery failed'; }
+  const addresses = parseServices(services);
+  const recovery = await reconnectWireless(adb, cache, devices, addresses);
+  if (recovery.attempted) devices = parseDevices(await adb('devices', '-l'));
+  const snapshots = new Map();
+  const errors = discoveryError ? [discoveryError] : [];
   for (const { serial, state } of devices) {
     const connection_type = kind(serial);
     const common = { connection_type, adb_address: connection_type === 'usb' ? '' : addresses.get(key(serial)) || serial,
@@ -59,6 +143,12 @@ export async function collect(config, adb, cache) {
       const props = parseProperties(await adb('-s', serial, 'shell', 'getprop'));
       ref = deviceRef(props['ro.serialno'] || props['ro.boot.serialno'] || (connection_type === 'usb' ? serial : ''));
       cache.aliases[key(serial)] = ref;
+      if (connection_type === 'wireless' && validEndpoint(common.adb_address)) {
+        cache.wireless ||= {};
+        const service = [...addresses].find(([, address]) => address === common.adb_address)?.[0] || key(serial);
+        cache.aliases[service] = ref;
+        cache.wireless[ref] = { service, endpoint: common.adb_address, retry_after: 0 };
+      }
       const snapshot = { ...common, device_ref: ref,
         name: props['ro.product.model'] || 'Android device', manufacturer: props['ro.product.manufacturer'] || '',
         model: props['ro.product.model'] || '', os: 'Android', os_version: props['ro.build.version.release'] || '',
@@ -80,6 +170,10 @@ export async function collect(config, adb, cache) {
       if (ref && !snapshots.has(ref)) snapshots.set(ref, { ...common, adb_state: state === 'device' ? 'error' : state,
         device_ref: ref, name: 'Android device', connection_status: 'attention', collection_error: error.message.slice(0, 500) });
     }
+  }
+  const onlineRefs = new Set([...snapshots.values()].filter(d => d.adb_state === 'device').map(d => d.device_ref));
+  if (Object.keys(cache.wireless || {}).some(ref => !onlineRefs.has(ref))) {
+    errors.push(...recovery.errors, 'Wireless device disconnected; automatic discovery/reconnect active. Check phone Wi-Fi and wireless debugging if it persists.');
   }
   let appium_status = 'not_configured';
   if (config.appium_url) {
@@ -108,13 +202,18 @@ export async function main() {
   if (config.appium_url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(config.appium_url).hostname)) {
     throw new Error('appium_url must point to the local Appium server');
   }
+  await configureNetwork(config);
   const token = process.env.DEVICE_CONNECTOR_TOKEN || config.token;
   if (!args.includes('--dry-run') && (!token || token.length < 32)) throw new Error('Configure a connector token of at least 32 characters');
-  const cachePath = resolve(dirname(configPath), '.state', `${config.connector_id.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+  const cachePath = resolve(dirname(configPath), '.state', `${basename(configPath)}.state.json`);
   let cache;
   try { cache = JSON.parse(await readFile(cachePath, 'utf8')); }
-  catch (error) { if (error.code !== 'ENOENT') throw error; cache = { aliases: {} }; }
-  const adb = async (...args) => (await exec(config.adb_path, args, { timeout: 15000, maxBuffer: 2 * 1024 * 1024, windowsHide: true })).stdout;
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    try { cache = JSON.parse(await readFile(resolve(dirname(cachePath), `${config.connector_id.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`), 'utf8')); }
+    catch (legacyError) { if (legacyError.code !== 'ENOENT') throw legacyError; cache = { aliases: {} }; }
+  }
+  const adb = async (...args) => (await exec(config.adb_path, args, { timeout: args[0] === 'connect' ? 5000 : 15000, maxBuffer: 2 * 1024 * 1024, windowsHide: true })).stdout;
   const adb_version = (await adb('version')).split(/\r?\n/).slice(0, 2).join(' ');
   const interval = Math.max(10, Math.min(25, Number(config.interval_seconds) || 20));
   console.log(`Connector ${config.connector_id}: ${args.includes('--dry-run') ? 'local inspection' : api.origin}, interval ${interval}s`);
@@ -136,7 +235,7 @@ export async function main() {
         console.log(`${result.server_time}: saved ${result.received} device(s)${payload.last_error ? `; ${payload.last_error}` : ''}`);
       }
     } catch (error) {
-      console.error(`Sync failed: ${error.message}`);
+      console.error(`Sync failed: ${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`);
       if (args.includes('--once') || args.includes('--dry-run')) throw error;
     }
     if (args.includes('--once') || args.includes('--dry-run')) break;

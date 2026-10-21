@@ -77,6 +77,9 @@
     }
     const date = value => { if(!value)return "—"; const normalized=value.replace(" ","T"); const parsed=new Date(/[zZ]$|[+-]\d{2}:\d{2}$/.test(normalized)?normalized:normalized+"Z"); return Number.isNaN(parsed.getTime())?"—":parsed.toLocaleString("zh-CN",{hour12:false}); };
     function pill(status) { return `<span class="pill ${safe(status)}">${safe(labels[status] || status)}</span>`; }
+    function connectionHint(connector) {
+      return connector.status==='offline'?'电脑连接器已停止上报，请检查电脑和采集器进程。':connector.device_count===0?'电脑连接器正常，手机尚未连接。系统正在自动发现和重连；若持续离线，请检查手机无线调试及同一局域网。':'';
+    }
     function render() {
       document.body.dataset.view=state.view;
       document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));
@@ -95,7 +98,7 @@
       $("#deviceSummary").textContent=state.loadError?'设备状态暂不可用':`共 ${state.devices.length} 台 · 在线 ${state.devices.filter(d=>d.connection_status==='online').length} · 需检查 ${state.devices.filter(d=>d.connection_status==='attention').length} · 离线 ${state.devices.filter(d=>d.connection_status==='offline').length}`;
       $("#syncTime").textContent=state.loadError?'刷新失败，请重试':state.loadedAt?`更新于 ${state.loadedAt.toLocaleTimeString('zh-CN',{hour12:false})}`:'';
       const appiumLabels={ready:'服务可用',unavailable:'服务不可用',not_configured:'未接入'};
-      $("#connectorList").innerHTML=state.loadError?'<div class="notice">连接器信息加载失败。</div>':state.connectors.length?state.connectors.map(c=>`<div class="connector-card"><strong>${safe(c.name)} ${pill(c.status)}</strong><div class="sub">最近上报：${date(c.last_seen_at)}</div><div>最近发现 ${safe(c.device_count)} 台设备 · Appium ${safe(appiumLabels[c.appium_status]||c.appium_status)}</div>${c.last_error?`<div class="danger">${safe(c.last_error)}</div>`:''}</div>`).join(''):`<div class="notice">${state.configured?'尚无连接器上报。请在本机启动设备连接器，已授权设备会自动出现在这里。':'连接器尚未启用，请先配置服务端连接器密钥，再启动本机连接器。'}</div>`;
+      $("#connectorList").innerHTML=state.loadError?'<div class="notice">连接器信息加载失败。</div>':state.connectors.length?state.connectors.map(c=>`<div class="connector-card"><strong>${safe(c.name)} ${pill(c.status)}</strong><div class="sub">最近上报：${date(c.last_seen_at)}</div><div>最近发现 ${safe(c.device_count)} 台设备 · Appium ${safe(appiumLabels[c.appium_status]||c.appium_status)}</div>${connectionHint(c)?`<div class="notice">${safe(connectionHint(c))}</div>`:''}${c.last_error?`<div class="danger">${safe(c.last_error)}</div>`:''}</div>`).join(''):`<div class="notice">${state.configured?'尚无连接器上报。请在本机启动设备连接器，已授权设备会自动出现在这里。':'连接器尚未启用，请先配置服务端连接器密钥，再启动本机连接器。'}</div>`;
       $("#head").innerHTML=`<tr>${c.cols.map(t=>`<th>${t}</th>`).join("")}</tr>`;
       $("#rows").innerHTML=state.loadError?`<tr><td class="empty" colspan="${c.cols.length}">暂时无法加载数据。<button class="secondary" id="retryLoad">重试</button></td></tr>`:c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">${q||isDevices&&$("#connectionFilter").value?'没有符合筛选条件的记录。':isDevices?'尚未接入设备。启动本机连接器后自动发现并保存。':`暂无记录。使用“${c.add}”开始登记。`}</td></tr>`;
     }

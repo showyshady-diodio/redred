@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { onRequestPost } from '../functions/api/connectors/heartbeat.js';
 import { onRequestGet as getDevices, onRequestPatch } from '../functions/api/devices/[[id]].js';
 import { onRequestGet as getConnectors } from '../functions/api/connectors/index.js';
-import { collect, deviceRef, parseBattery, parseDevices } from '../connector/adb-connector.mjs';
+import { collect, deviceRef, parseBattery, parseDevices, parseServices, reconnectWireless, parseWindowsProxy } from '../connector/adb-connector.mjs';
 
 const token = 'test-only-connector-token-0123456789';
 const sample = () => ({ connector_id: 'local-adb', agent_name: 'test-agent', appium_status: 'not_configured',
@@ -108,4 +108,54 @@ test('additive migration preserves existing inventory and login relationships',a
     assert.equal(db.prepare("SELECT device_id FROM account_device_sessions WHERE id='session'").get().device_id,'old');
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
   }finally{db.close();}
+});
+
+test('wireless reconnect follows changed port and service suffix without pairing or scanning',async()=>{
+  const ref=deviceRef('same-hardware');
+  const cache={aliases:{'adb-same-hardware-old':ref},wireless:{[ref]:{service:'adb-same-hardware-old',endpoint:'192.0.2.1:40000',retry_after:999999}}};
+  const calls=[];
+  const adb=async(...args)=>{calls.push(args);return 'connected to '+args[1];};
+  const services=parseServices('adb-same-hardware-new _adb-tls-connect._tcp 192.0.2.1:50000\nadb-stranger-random _adb-tls-connect._tcp 192.0.2.2:50001\nadb-same-hardware-code _adb-tls-pairing._tcp 192.0.2.1:60000\nadb-unknown-random _adb-tls-connect._tcp 192.0.2.3:1234');
+  await reconnectWireless(adb,cache,[],services,1000);
+  assert.deepEqual(calls,[['connect','192.0.2.1:50000']]);
+  await reconnectWireless(adb,cache,[],services,2000);
+  assert.equal(calls.length,1,'same endpoint must back off');
+  await reconnectWireless(adb,cache,[],parseServices('adb-same-hardware-new _adb-tls-connect._tcp 192.0.2.1:50002'),2001);
+  assert.equal(calls.length,2,'a changed port is retried immediately');
+  cache.aliases['adb-same-hardware-new']=ref;
+  await reconnectWireless(adb,cache,[{serial:'adb-same-hardware-new._adb-tls-connect._tcp',state:'device'}],services,9999999);
+  assert.equal(calls.length,2,'online phones must not be reconnected');
+});
+
+test('collection reconnects a known phone then reports its new address with the same identity',async()=>{
+  const ref=deviceRef('same-hardware');
+  const cache={aliases:{'adb-same-hardware-old':ref}};
+  let connected=false;
+  const adb=async(...args)=>{
+    if(args[0]==='devices')return connected?'192.0.2.1:50000 device':'';
+    if(args[0]==='mdns')return 'adb-same-hardware-new _adb-tls-connect._tcp 192.0.2.1:50000';
+    if(args[0]==='connect'){connected=true;return 'connected to 192.0.2.1:50000';}
+    if(args.at(-1)==='getprop')return '[ro.serialno]: [same-hardware]\n[ro.product.model]: [Test phone]';
+    if(args.at(-1)==='battery')return 'level: 50\nscale: 100\nstatus: 3';
+    return 'Physical size: 720x1640';
+  };
+  const payload=await collect({connector_id:'local-adb',agent_name:'test'},adb,cache);
+  assert.equal(payload.devices.length,1);assert.equal(payload.devices[0].device_ref,ref);
+  assert.equal(payload.devices[0].adb_address,'192.0.2.1:50000');assert.equal(payload.last_error,'');
+});
+
+test('failed reconnect remains offline with diagnostics; scan failure does not send an empty snapshot',async()=>{
+  const ref=deviceRef('same-hardware');
+  const cache={aliases:{'adb-same-hardware-old':ref},wireless:{[ref]:{service:'adb-same-hardware-old',endpoint:'192.0.2.1:40000'}}};
+  const adb=async(...args)=>args[0]==='connect'?'failed to connect':'';
+  const payload=await collect({connector_id:'local-adb',agent_name:'test'},adb,cache);
+  assert.equal(payload.devices.length,0);assert.match(payload.last_error,/automatic discovery\/reconnect active/);
+  await assert.rejects(collect({},async()=>{throw new Error('ADB unavailable');},cache),/ADB unavailable/);
+});
+
+test('Windows proxy settings are used only when enabled and preserve HTTPS routing',()=>{
+  assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x1','ProxyServer REG_SZ 127.0.0.1:7897'),'http://127.0.0.1:7897/');
+  assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x0','ProxyServer REG_SZ 127.0.0.1:7897'),'');
+  assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x1','ProxyServer REG_SZ http=127.0.0.1:8080;https=127.0.0.1:8443'),'http://127.0.0.1:8443/');
+  assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x1','ProxyServer REG_SZ socks=127.0.0.1:1080'),'');
 });
