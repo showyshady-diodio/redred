@@ -52,6 +52,12 @@ CREATE TABLE IF NOT EXISTS devices (
   sdk_version TEXT NOT NULL DEFAULT '',
   collected_at TEXT,
   collection_error TEXT NOT NULL DEFAULT '',
+  connection_mode TEXT NOT NULL DEFAULT 'active' CHECK (connection_mode IN ('active', 'paused')),
+  control_revision INTEGER NOT NULL DEFAULT 0,
+  control_ack_revision INTEGER NOT NULL DEFAULT 0,
+  control_changed_at TEXT,
+  control_ack_at TEXT,
+  control_error TEXT NOT NULL DEFAULT '',
   notes TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP

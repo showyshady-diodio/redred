@@ -5,7 +5,8 @@ import { readFile } from 'node:fs/promises';
 import { onRequestPost } from '../functions/api/connectors/heartbeat.js';
 import { onRequestGet as getDevices, onRequestPatch } from '../functions/api/devices/[[id]].js';
 import { onRequestGet as getConnectors } from '../functions/api/connectors/index.js';
-import { collect, deviceRef, parseBattery, parseDevices, parseServices, reconnectWireless, parseWindowsProxy } from '../connector/adb-connector.mjs';
+import { onRequestGet as getControls } from '../functions/api/connectors/control.js';
+import { collect, deviceRef, parseBattery, parseDevices, parseServices, reconnectWireless, parseWindowsProxy, validateControls } from '../connector/adb-connector.mjs';
 
 const token = 'test-only-connector-token-0123456789';
 const sample = () => ({ connector_id: 'local-adb', agent_name: 'test-agent', appium_status: 'not_configured',
@@ -26,7 +27,7 @@ async function database() {
     });
     return { ...bound([]), bind: (...values) => bound(values) };
   };
-  return { db, env: { DEVICE_CONNECTOR_TOKEN: token, DB: { prepare,
+  return { db, env: { DEVICE_CONNECTOR_TOKEN: token, DEVICE_CONTROL_TOKEN:token, DB: { prepare,
     batch: async statements => { db.exec('BEGIN'); try { const r=[]; for(const s of statements)r.push(await s.run()); db.exec('COMMIT'); return r; } catch(e){db.exec('ROLLBACK');throw e;} } } } };
 }
 
@@ -104,6 +105,7 @@ test('additive migration preserves existing inventory and login relationships',a
     db.exec(`CREATE TABLE devices (id TEXT PRIMARY KEY,name TEXT NOT NULL,manufacturer TEXT DEFAULT '',model TEXT DEFAULT '',os TEXT DEFAULT '',os_version TEXT DEFAULT '',status TEXT DEFAULT 'available',connection_status TEXT DEFAULT 'unpaired',agent_name TEXT DEFAULT '',last_seen_at TEXT,battery_percent INTEGER,screen_resolution TEXT DEFAULT '',notes TEXT DEFAULT '',created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP); INSERT INTO devices (id,name,notes) VALUES ('old','Existing','Preserve');`);
     db.exec("INSERT INTO work_accounts (id,handle,phone_number) VALUES ('account','test','test-number'); INSERT INTO account_device_sessions (id,account_id,device_id) VALUES ('session','account','old');");
     db.exec(await readFile(new URL('../migrations/0003-device-connector.sql',import.meta.url),'utf8'));
+    db.exec(await readFile(new URL('../migrations/0004-device-connection-control.sql',import.meta.url),'utf8'));
     assert.equal(db.prepare("SELECT notes FROM devices WHERE id='old'").get().notes,'Preserve');
     assert.equal(db.prepare("SELECT device_id FROM account_device_sessions WHERE id='session'").get().device_id,'old');
     assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
@@ -158,4 +160,79 @@ test('Windows proxy settings are used only when enabled and preserve HTTPS routi
   assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x0','ProxyServer REG_SZ 127.0.0.1:7897'),'');
   assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x1','ProxyServer REG_SZ http=127.0.0.1:8080;https=127.0.0.1:8443'),'http://127.0.0.1:8443/');
   assert.equal(parseWindowsProxy('ProxyEnable REG_DWORD 0x1','ProxyServer REG_SZ socks=127.0.0.1:1080'),'');
+});
+
+test('pause/resume persists intent, waits for acknowledgement and rejects stale results',async()=>{
+  const {db,env}=await database();
+  const payload=sample();
+  const send=async p=>onRequestPost({env,request:request(p)});
+  const read=async()=> (await (await getDevices({env,params:{}})).json())[0];
+  try{
+    await send(payload);const device=await read();
+    const action=async name=>onRequestPatch({env,params:{id:device.id},request:new Request('https://example.test',{method:'PATCH',headers:{'x-device-control-token':token},body:JSON.stringify({connection_action:name})})});
+    assert.equal((await onRequestPatch({env,params:{id:device.id},request:new Request('https://example.test',{method:'PATCH',body:JSON.stringify({connection_action:'pause'})})})).status,401);
+    assert.equal((await (await action('pause')).json()).connection_status,'pausing');
+    assert.equal((await (await action('pause')).json()).control_revision,1,'duplicate pause must be idempotent');
+    assert.equal((await getControls({env,request:request({},'bad')})).status,401);
+    const policy=await (await getControls({env,request:request({})})).json();
+    assert.equal(policy.controls[0].connection_mode,'paused');
+    const paused={...payload,devices:[],control_results:[{device_ref:payload.devices[0].device_ref,revision:1,mode:'paused',status:'applied'}]};
+    await send(paused);assert.equal((await read()).connection_status,'paused');
+    const pausedAt=(await read()).last_seen_at;
+    await send(payload);assert.equal((await read()).connection_status,'paused','late telemetry cannot undo pause');
+    assert.equal((await read()).last_seen_at,pausedAt);
+    assert.equal((await (await action('resume')).json()).connection_status,'resuming');
+    await send(paused);assert.equal((await read()).connection_status,'resuming','stale pause acknowledgement is ignored');
+    await send({...payload,control_results:[{device_ref:payload.devices[0].device_ref,revision:2,mode:'active',status:'applied'}]});
+    assert.equal((await read()).connection_status,'online');assert.equal((await read()).id,device.id);
+    assert.equal((await read()).control_ack_revision,2);
+    assert.equal((await action('other')).status,400);
+    assert.equal((await send({...paused,devices:payload.devices})).status,400,'contradictory pause/telemetry must fail');
+  }finally{db.close();}
+});
+
+test('a failed pause remains an error and a later retry can acknowledge the same revision',async()=>{
+  const {db,env}=await database();const payload=sample();
+  try{
+    await onRequestPost({env,request:request(payload)});
+    const row=db.prepare('SELECT id FROM devices').get();
+    await onRequestPatch({env,params:{id:row.id},request:new Request('https://example.test',{method:'PATCH',headers:{'x-device-control-token':token},body:JSON.stringify({connection_action:'pause'})})});
+    const result={device_ref:payload.devices[0].device_ref,revision:1,mode:'paused',status:'error',error:'Disconnect failed'};
+    await onRequestPost({env,request:request({...payload,devices:[],control_results:[result]})});
+    let device=await (await getDevices({env,params:{id:row.id}})).json();
+    assert.equal(device.connection_status,'attention');assert.equal(device.control_ack_revision,0);
+    await onRequestPost({env,request:request({...payload,devices:[],control_results:[{...result,status:'applied',error:''}]})});
+    device=await (await getDevices({env,params:{id:row.id}})).json();assert.equal(device.connection_status,'paused');
+  }finally{db.close();}
+});
+
+test('paused phones are disconnected and never sampled or reconnected, including after restart',async()=>{
+  const ref=deviceRef('same-hardware');
+  const cache={aliases:{'192.0.2.1:50000':ref,'adb-same-hardware-old':ref},wireless:{[ref]:{endpoint:'192.0.2.1:50000'}},controls:[{device_ref:ref,connection_mode:'paused',control_revision:1}]};
+  let connected=true;const calls=[];
+  const adb=async(...args)=>{
+    calls.push(args);
+    if(args[0]==='devices')return connected?'192.0.2.1:50000 device':'';
+    if(args[0]==='mdns')return 'adb-same-hardware-new _adb-tls-connect._tcp 192.0.2.1:50001';
+    if(args[0]==='disconnect'){connected=false;return 'disconnected';}
+    throw new Error('Paused phone must not be sampled/reconnected');
+  };
+  for(const persisted of [cache,JSON.parse(JSON.stringify(cache))]){
+    const output=await collect({connector_id:'local-adb',agent_name:'test'},adb,persisted);
+    assert.equal(output.devices.length,0);assert.equal(output.last_error,'');
+    assert.equal(output.control_results[0].status,'applied');
+  }
+  assert.equal(calls.filter(c=>c[0]==='disconnect').length,1);
+  assert.equal(calls.filter(c=>c[0]==='connect'||c[0]==='-s').length,0);
+  cache.controls=[{device_ref:ref,connection_mode:'active',control_revision:2}];
+  const recovery=await reconnectWireless(async(...args)=>{assert.equal(args[0],'connect');return 'connected to '+args[1];},cache,[],parseServices('adb-same-hardware-new _adb-tls-connect._tcp 192.0.2.1:50002'),Date.now());
+  assert.equal(recovery.attempted,1);
+});
+
+test('control policies reject invalid, duplicate and foreign connector data',()=>{
+  const control={device_ref:deviceRef('phone'),connection_mode:'paused',control_revision:1};
+  assert.equal(validateControls({connector_id:'local-adb',controls:[control]},'local-adb').length,1);
+  assert.throws(()=>validateControls({connector_id:'other',controls:[control]},'local-adb'));
+  assert.throws(()=>validateControls({connector_id:'local-adb',controls:[control,control]},'local-adb'));
+  assert.throws(()=>validateControls({connector_id:'local-adb',controls:[{...control,connection_mode:'run-shell'}]},'local-adb'));
 });

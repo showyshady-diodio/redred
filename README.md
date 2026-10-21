@@ -67,6 +67,16 @@ The connector respects HTTP(S) proxy environment variables. On Windows, when no 
 
 The current connector is a running local process, not a Windows startup service. Computer restart still requires starting it again. Appium device sessions and task execution remain separate follow-up work.
 
+### Pause and resume wireless devices
+
+The device row provides **Pause connection** and **Resume connection**. Pause is persisted in D1 and the local connector cache. The connector fetches the authenticated control policy before each cycle, disconnects the selected wireless phone, skips its telemetry, and excludes it from automatic reconnection. Resume becomes online only after the phone reconnects and the connector acknowledges the current control revision. Account links, names, notes and the last telemetry are preserved. Requests are normally handled on the next 20-second cycle. If the connector is stopped or cannot fetch the current policy, the UI keeps the request pending rather than falsely claiming completion. Cached pauses are still enforced on cloud failures and after restarting the connector.
+
+For an existing database, apply `migrations/0004-device-connection-control.sql` once before deploying this feature. Do not reapply earlier migrations. No table recreation is needed. Provision a separate Pages production secret `DEVICE_CONTROL_TOKEN` with `node configure-device-control.mjs redred <wrangler.js>`. The generated browser control code is saved only in ignored `connector/device-control.local.json`; it is separate from the connector token. The browser asks for this code on the first control action and retains it only for the current tab session. No code is embedded in the HTML, URLs, or repository.
+
+On the current workstation and production database, migration 0004 has already been applied. `setup-local.mjs` configures a separate development control code in `connector/device-control.dev.local.json`. Production verification passed: pause was acknowledged, ADB became empty, telemetry stayed unchanged over multiple cycles, restarting the connector preserved pause, and resume restored the same single device record online. Automated checks: 13 passing tests. The device was restored to active/online after verification.
+
+Protocol: `PATCH /api/devices/:id` with `{"connection_action":"pause"}` or `"resume"` and header `x-device-control-token`; `GET /api/connectors/control` requires the connector Bearer token. Heartbeats carry revisioned `control_results`. Old acknowledgements cannot overwrite newer requests, and delayed telemetry cannot undo a pause. This first version controls enrolled wireless devices; USB connections must be unplugged to fully disconnect. Appium task execution will need to honor the same desired state when it is implemented.
+
 ## Scope
 
 - Work accounts: country calling code + phone number as the account identity, display name, status, notes. Phone numbers are not checked against a format regex.

@@ -27,6 +27,16 @@ export async function onRequestPost({ request, env }) {
       !text(data.adb_version || '') || !['ready', 'unavailable', 'not_configured'].includes(data.appium_status) ||
       !text(data.last_error || '', 500)) return badRequest('Invalid connector snapshot');
   const seen = new Set();
+  const controlResults = data.control_results || [];
+  const controlRefs = new Set();
+  if (!Array.isArray(controlResults) || controlResults.length > 50) return badRequest('Invalid control results');
+  for (const result of controlResults) {
+    if (!result || !/^adb-[a-f0-9]{64}$/.test(result.device_ref) || controlRefs.has(result.device_ref) ||
+        !Number.isSafeInteger(result.revision) || result.revision < 0 ||
+        !['active', 'paused'].includes(result.mode) || !['applied', 'error'].includes(result.status) ||
+        !text(result.error || '', 500)) return badRequest('Invalid control result');
+    controlRefs.add(result.device_ref);
+  }
   for (const d of data.devices) {
     if (!d || !/^adb-[a-f0-9]{64}$/.test(d.device_ref) || seen.has(d.device_ref) ||
         !['online', 'attention'].includes(d.connection_status) ||
@@ -41,6 +51,13 @@ export async function onRequestPost({ request, env }) {
       return badRequest('Invalid or duplicate device telemetry');
     }
     seen.add(d.device_ref);
+  }
+  for (const result of controlResults) {
+    if (result.status !== 'applied') continue;
+    if (result.mode === 'paused' && seen.has(result.device_ref)) return badRequest('Paused devices must not include telemetry');
+    if (result.mode === 'active' && !data.devices.some(d => d.device_ref === result.device_ref && d.adb_state === 'device')) {
+      return badRequest('Resume acknowledgement requires a connected device');
+    }
   }
   if (seen.size) {
     const refs = [...seen];
@@ -72,11 +89,21 @@ export async function onRequestPost({ request, env }) {
         charging=CASE WHEN excluded.adb_state='device' THEN excluded.charging ELSE devices.charging END,
         sdk_version=COALESCE(NULLIF(excluded.sdk_version,''),devices.sdk_version),
         collected_at=COALESCE(excluded.collected_at,devices.collected_at), collection_error=excluded.collection_error,
-        updated_at=excluded.updated_at`)
+        updated_at=excluded.updated_at WHERE devices.connection_mode = 'active'`)
       .bind(id(), d.name, d.device_ref, connectorId, d.manufacturer || '', d.model || '', d.os || '', d.os_version || '',
         d.connection_status, data.agent_name.trim(), d.adb_state === 'device' ? now : null, d.battery_percent ?? null,
         d.screen_resolution || '', d.connection_type, d.adb_address || '', d.adb_state,
         d.charging == null ? null : Number(d.charging), d.sdk_version || '', d.collected_at || null, d.collection_error || ''));
+  }
+  for (const result of controlResults) {
+    statements.push(env.DB.prepare(`UPDATE devices SET
+      control_ack_revision = CASE WHEN ? = 'applied' THEN ? ELSE control_ack_revision END,
+      control_ack_at = CASE WHEN ? = 'applied' THEN ? ELSE control_ack_at END,
+      control_error = ?, connection_status = CASE WHEN ? = 'paused' AND ? = 'applied' THEN 'offline' ELSE connection_status END,
+      adb_state = CASE WHEN ? = 'paused' AND ? = 'applied' THEN 'offline' ELSE adb_state END
+      WHERE connector_id = ? AND device_ref = ? AND control_revision = ? AND connection_mode = ?`)
+      .bind(result.status, result.revision, result.status, now, result.status === 'error' ? result.error || 'Control failed' : '',
+        result.mode, result.status, result.mode, result.status, connectorId, result.device_ref, result.revision, result.mode));
   }
   await env.DB.batch(statements);
   return json({ ok: true, received: seen.size, server_time: now });

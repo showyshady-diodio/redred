@@ -94,11 +94,11 @@ function knownServiceRef(service, cache) {
   if (!serial) return null;
   try {
     const ref = deviceRef(serial);
-    return Object.values(cache.aliases).includes(ref) ? ref : null;
+    return Object.values(cache.aliases).includes(ref) || cache.controls?.some(c => c.device_ref === ref) ? ref : null;
   } catch { return null; }
 }
 
-export async function reconnectWireless(adb, cache, devices, addresses, now = Date.now()) {
+export async function reconnectWireless(adb, cache, devices, addresses, now = Date.now(), paused = new Set()) {
   cache.wireless ||= {};
   const active = new Set(devices.filter(d => d.state === 'device').map(d => cache.aliases[key(d.serial)]).filter(Boolean));
   for (const [service, endpoint] of addresses) {
@@ -110,6 +110,7 @@ export async function reconnectWireless(adb, cache, devices, addresses, now = Da
   const errors = [];
   let attempted = 0;
   for (const [ref, target] of Object.entries(cache.wireless)) {
+    if (paused.has(ref)) continue;
     if (active.has(ref) || !validEndpoint(target.endpoint) || now < (target.retry_after || 0)) continue;
     if (attempted >= 3) break;
     attempted++;
@@ -122,17 +123,71 @@ export async function reconnectWireless(adb, cache, devices, addresses, now = Da
   return { attempted, errors };
 }
 
+export function validateControls(data, connectorId) {
+  if (!data || data.connector_id !== connectorId || !Array.isArray(data.controls) || data.controls.length > 50) {
+    throw new Error('Invalid device control policy');
+  }
+  const seen = new Set();
+  return data.controls.map(control => {
+    if (!control || !/^adb-[a-f0-9]{64}$/.test(control.device_ref) || seen.has(control.device_ref) ||
+        !['active', 'paused'].includes(control.connection_mode) ||
+        !Number.isSafeInteger(control.control_revision) || control.control_revision < 0) throw new Error('Invalid device control policy');
+    seen.add(control.device_ref);
+    return { device_ref: control.device_ref, connection_mode: control.connection_mode, control_revision: control.control_revision };
+  });
+}
+
+function transportRef(serial, cache, addresses) {
+  const direct = cache.aliases[key(serial)] || knownServiceRef(key(serial), cache);
+  if (direct) return direct;
+  const service = [...addresses].find(([, address]) => address === serial)?.[0];
+  if (service) return knownServiceRef(service, cache);
+  if (kind(serial) === 'usb') {
+    try {
+      const ref = deviceRef(serial);
+      if (cache.controls?.some(c => c.device_ref === ref)) return ref;
+    } catch { /* Unknown transport cannot be associated without a prior reference. */ }
+  }
+  return null;
+}
+
+export async function enforcePaused(adb, cache, devices, addresses) {
+  const paused = (cache.controls || []).filter(c => c.connection_mode === 'paused');
+  const refs = new Set(paused.map(c => c.device_ref));
+  const failures = new Map();
+  let attempted = false;
+  for (const device of devices) {
+    const ref = transportRef(device.serial, cache, addresses);
+    if (!refs.has(ref)) continue;
+    if (kind(device.serial) === 'usb') { failures.set(ref, 'USB is still attached; unplug USB to fully disconnect'); continue; }
+    attempted = true;
+    try { await adb('disconnect', device.serial); }
+    catch { failures.set(ref, 'ADB disconnect failed; retrying'); }
+  }
+  if (attempted) devices = parseDevices(await adb('devices', '-l'));
+  for (const device of devices) {
+    const ref = transportRef(device.serial, cache, addresses);
+    if (refs.has(ref)) failures.set(ref, failures.get(ref) || 'Device is still connected; retrying disconnect');
+  }
+  return { devices, results: paused.map(c => ({ device_ref: c.device_ref, revision: c.control_revision, mode: 'paused',
+    status: failures.has(c.device_ref) ? 'error' : 'applied', error: failures.get(c.device_ref) || '' })) };
+}
+
 export async function collect(config, adb, cache) {
   let devices = parseDevices(await adb('devices', '-l'));
   let services = '';
   let discoveryError = '';
   try { services = await adb('mdns', 'services'); } catch { discoveryError = 'Wireless discovery failed'; }
   const addresses = parseServices(services);
-  const recovery = await reconnectWireless(adb, cache, devices, addresses);
+  const pausedRefs = new Set((cache.controls || []).filter(c => c.connection_mode === 'paused').map(c => c.device_ref));
+  const pause = await enforcePaused(adb, cache, devices, addresses);
+  devices = pause.devices;
+  const recovery = await reconnectWireless(adb, cache, devices, addresses, Date.now(), pausedRefs);
   if (recovery.attempted) devices = parseDevices(await adb('devices', '-l'));
   const snapshots = new Map();
   const errors = discoveryError ? [discoveryError] : [];
   for (const { serial, state } of devices) {
+    if (pausedRefs.has(transportRef(serial, cache, addresses))) continue;
     const connection_type = kind(serial);
     const common = { connection_type, adb_address: connection_type === 'usb' ? '' : addresses.get(key(serial)) || serial,
       adb_state: state, connection_status: state === 'device' ? 'online' : 'attention',
@@ -172,8 +227,14 @@ export async function collect(config, adb, cache) {
     }
   }
   const onlineRefs = new Set([...snapshots.values()].filter(d => d.adb_state === 'device').map(d => d.device_ref));
-  if (Object.keys(cache.wireless || {}).some(ref => !onlineRefs.has(ref))) {
+  if (Object.keys(cache.wireless || {}).some(ref => !pausedRefs.has(ref) && !onlineRefs.has(ref))) {
     errors.push(...recovery.errors, 'Wireless device disconnected; automatic discovery/reconnect active. Check phone Wi-Fi and wireless debugging if it persists.');
+  }
+  const control_results = [...pause.results];
+  for (const control of cache.controls || []) {
+    if (control.connection_mode === 'active' && control.control_revision > 0 && onlineRefs.has(control.device_ref)) {
+      control_results.push({ device_ref: control.device_ref, revision: control.control_revision, mode: 'active', status: 'applied' });
+    }
   }
   let appium_status = 'not_configured';
   if (config.appium_url) {
@@ -184,7 +245,7 @@ export async function collect(config, adb, cache) {
     } catch { appium_status = 'unavailable'; }
   }
   return { connector_id: config.connector_id, agent_name: config.agent_name, devices: [...snapshots.values()],
-    appium_status, last_error: errors.join('; ').slice(0, 500) };
+    control_results, appium_status, last_error: errors.join('; ').slice(0, 500) };
 }
 
 export async function main() {
@@ -216,14 +277,26 @@ export async function main() {
   const adb = async (...args) => (await exec(config.adb_path, args, { timeout: args[0] === 'connect' ? 5000 : 15000, maxBuffer: 2 * 1024 * 1024, windowsHide: true })).stdout;
   const adb_version = (await adb('version')).split(/\r?\n/).slice(0, 2).join(' ');
   const interval = Math.max(10, Math.min(25, Number(config.interval_seconds) || 20));
+  const saveCache = async () => {
+    await mkdir(dirname(cachePath), { recursive: true });
+    await writeFile(`${cachePath}.tmp`, JSON.stringify(cache), { mode: 0o600 });
+    await rename(`${cachePath}.tmp`, cachePath);
+  };
   console.log(`Connector ${config.connector_id}: ${args.includes('--dry-run') ? 'local inspection' : api.origin}, interval ${interval}s`);
   do {
     const cycleStart = Date.now();
     try {
+      if (!args.includes('--dry-run')) {
+        const response = await fetch(new URL('/api/connectors/control', api), {
+          headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000), redirect: 'error',
+        });
+        if (!response.ok) throw new Error(`Control sync HTTP ${response.status}; collection held until policy is available`);
+        cache.controls = validateControls(await response.json(), config.connector_id);
+        // Persist pause intent before disconnecting so restart/offline retries cannot resume it.
+        await saveCache();
+      }
       const payload = { ...await collect(config, adb, cache), adb_version };
-      await mkdir(dirname(cachePath), { recursive: true });
-      await writeFile(`${cachePath}.tmp`, JSON.stringify(cache), { mode: 0o600 });
-      await rename(`${cachePath}.tmp`, cachePath);
+      await saveCache();
       if (args.includes('--dry-run')) console.log(JSON.stringify(payload, null, 2));
       else {
         const response = await fetch(new URL('/api/connectors/heartbeat', api), {
@@ -232,10 +305,14 @@ export async function main() {
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(`Heartbeat HTTP ${response.status}: ${result.error || 'Request failed'}`);
-        console.log(`${result.server_time}: saved ${result.received} device(s)${payload.last_error ? `; ${payload.last_error}` : ''}`);
+        console.log(`${result.server_time}: saved ${result.received} device(s), paused ${payload.control_results.filter(r => r.mode === 'paused' && r.status === 'applied').length}${payload.last_error ? `; ${payload.last_error}` : ''}`);
       }
     } catch (error) {
       console.error(`Sync failed: ${error.message}${error.cause?.code ? ` (${error.cause.code})` : ''}`);
+      if (cache.controls?.some(c => c.connection_mode === 'paused')) {
+        try { await enforcePaused(adb, cache, parseDevices(await adb('devices', '-l')), new Map()); }
+        catch { console.error('Cached pause enforcement failed; collection remains held'); }
+      }
       if (args.includes('--once') || args.includes('--dry-run')) throw error;
     }
     if (args.includes('--once') || args.includes('--dry-run')) break;
