@@ -1,0 +1,8 @@
+{
+  "api_url": "https://redred-1vl.pages.dev",
+  "connector_id": "local-adb",
+  "agent_name": "local-workstation",
+  "adb_path": "../../../work/android-sdk/platform-tools/adb.exe",
+  "interval_seconds": 20,
+  "appium_url": ""
+}

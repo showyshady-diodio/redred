@@ -19,6 +19,7 @@
     .pill{display:inline-block;padding:4px 8px;border-radius:14px;font-size:12px;background:#edf1f3;color:#53616a}.pill.active,.pill.available,.pill.online{background:#e8f2ee;color:#24684a}.pill.verification_needed,.pill.maintenance,.pill.attention{background:#fff1dd;color:#8a5c16}.pill.disabled,.pill.offline{background:#fbe9e6;color:#a34235}
     dialog{border:0;border-radius:12px;padding:0;width:min(460px,calc(100vw - 28px));box-shadow:0 20px 70px #17242c33}dialog::backdrop{background:#1c2c3580}.form{padding:22px}.form h2{font-size:18px;margin:0 0 18px}.fields{display:grid;gap:13px}.fields label{display:grid;gap:6px;font-size:13px;color:#58666f}.form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.notice{color:#65727b;background:#f6f8f9;padding:12px 14px;border-radius:8px;font-size:13px;line-height:1.5;margin-top:12px}
     .integration h2{font-size:17px;margin:0 0 8px}.integration p,.integration li{font-size:13px;color:#5f6d76;line-height:1.65}.integration ul{padding-left:20px}.integration pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8f9;border:1px solid #e8ecee;border-radius:8px;padding:14px;font-size:12px;color:#35444d}.integration .bar{margin-bottom:8px}
+    .connector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.connector-card{border:1px solid #e4e8eb;border-radius:9px;padding:14px;line-height:1.8}.connector-card strong{display:block}.device-summary{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;color:#58666f;font-size:13px}.detail-grid{display:grid;grid-template-columns:110px 1fr;gap:12px;font-size:14px;margin:0}.detail-grid dt{color:#71808a}.detail-grid dd{margin:0;overflow-wrap:anywhere}#deviceDialog{width:min(600px,calc(100vw - 28px))}button:disabled{opacity:.55;cursor:wait}.pill,td button{white-space:nowrap}.table-wrap{overflow:auto}body[data-view="devices"] table{min-width:1000px}
     @media(max-width:720px){.shell{padding:22px 14px}.stats{grid-template-columns:1fr}.bar{align-items:flex-start;flex-direction:column}.controls{width:100%;flex-wrap:wrap}.controls input,.controls select{flex:1}.table-wrap{overflow:auto}table{min-width:680px}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -32,40 +33,23 @@
     </section>
     <nav class="tabs"><button class="tab active" data-view="accounts">工作账号</button><button class="tab" data-view="devices">设备</button><button class="tab" data-view="sessions">登录记录</button></nav>
     <section class="panel">
-      <div class="bar"><h2 id="viewTitle">工作账号</h2><div class="controls"><input class="search" id="search" placeholder="搜索账号"><button class="primary" id="addButton">添加工作账号</button></div></div>
+      <div class="bar"><h2 id="viewTitle">工作账号</h2><div class="controls"><input class="search" id="search" placeholder="搜索账号"><select id="connectionFilter" aria-label="连接状态" hidden><option value="">全部连接状态</option><option value="online">在线</option><option value="attention">需检查</option><option value="offline">离线</option><option value="unpaired">未接入</option></select><button class="secondary" id="refreshButton">刷新</button><button class="primary" id="addButton">添加工作账号</button></div></div>
+      <div id="deviceSummary" class="device-summary" hidden></div>
       <div class="table-wrap"><table><thead id="head"></thead><tbody id="rows"></tbody></table></div>
       <div class="notice" id="viewNotice">登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。此模块不执行点赞或其他平台操作。</div>
     </section>
-    <section class="panel integration">
-      <div class="bar"><div><h2>设备接入说明（给开发对接）</h2><div class="sub">当前是人工对接资料，尚无设备上报 API。</div></div><button class="secondary" id="copyContract">复制示例 JSON</button></div>
-      <p>网页不能直接读取朋友电脑上 USB 连接的设备，也不能访问 <code>127.0.0.1</code> 上朋友的本机。共享部署后，朋友在自己的电脑运行 ADB/Appium 连接器；连接器再通过认证 HTTPS 把设备状态写入云端，网页从 D1 展示。</p>
-      <ul>
-        <li><strong>需要的设备信息：</strong>连接器名称、连接器生成的设备引用、厂商、型号、系统及版本、在线状态、最近上报时间、电量、分辨率。</li>
-        <li><strong>连接方式：</strong>连接器主动向 Cloudflare 发起 HTTPS 请求；不要把 ADB 端口暴露到公网，也不要分享 Wrangler OAuth 凭证。</li>
-        <li><strong>接入状态：</strong>当前页面只有设备字段，未实现连接器配对、鉴权和上报接口。朋友可以先按下面的数据结构反馈实际能采集的字段；确定后再补 API。</li>
-        <li><strong>暂不采集：</strong>IMEI、Android ID、MAC 地址、账号密码、Cookie、验证码或 App 内会话内容。</li>
-      </ul>
-      <pre id="deviceContract">{
-  "agent_name": "friend-workstation",
-  "device_ref": "agent-generated-id",
-  "name": "Android device 01",
-  "manufacturer": "manufacturer",
-  "model": "model",
-  "os": "Android",
-  "os_version": "version",
-  "connection_status": "online",
-  "last_seen_at": "2026-10-20T10:00:00Z",
-  "battery_percent": 80,
-  "screen_resolution": "1080x2400"
-}</pre>
-      <div class="sub" id="copyStatus">示例只用于字段对齐，不是可直接调用的 API 请求。</div>
+    <section class="panel" id="connectorPanel" hidden>
+      <div class="bar"><div><h2>设备连接器</h2><div class="sub">连接器每 20 秒采集并自动保存，页面每 10 秒刷新。</div></div><span class="sub" id="syncTime" role="status"></span></div>
+      <div id="connectorList" class="connector-grid"></div>
+      <div class="notice">连接器运行在连接手机的电脑上。新设备首次授权连接后自动建档，同一台设备重连后更新原记录；超过 90 秒未上报显示离线。Appium 服务状态只表示服务是否可用，设备操作将在后续接入。</div>
     </section>
   </main>
 
   <dialog id="dialog"><form class="form" id="form"><h2 id="formTitle"></h2><div class="fields" id="fields"></div><div class="form-actions"><button type="button" class="secondary" id="cancel">取消</button><button class="primary">保存</button></div></form></dialog>
+  <dialog id="deviceDialog"><div class="form"><h2>设备详情</h2><dl id="deviceDetails" class="detail-grid"></dl><div class="form-actions"><button type="button" class="secondary" id="closeDevice">关闭</button></div></div></dialog>
   <script type="module">
     const labels = { active:"正常", paused:"暂停", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束", unpaired:"未接入", online:"在线", offline:"离线", attention:"需检查" };
-    const state = { view:"accounts", accounts:[], devices:[], sessions:[], loadError:false };
+    const state = { view:['accounts','devices','sessions'].includes(location.hash.slice(1))?location.hash.slice(1):'accounts', accounts:[], devices:[], sessions:[], connectors:[], configured:false, loadError:false, loadedAt:null };
     const $ = (s) => document.querySelector(s);
     const safe = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     async function api(path, options={}) {
@@ -74,40 +58,54 @@
       if (!response.ok) throw new Error([data.error || `Request failed (${response.status})`,data.detail].filter(Boolean).join("\n"));
       return data;
     }
+    let refreshing=false;
     async function refresh() {
+      if(refreshing)return;
+      refreshing=true; $("#refreshButton").disabled=true;
       try {
-        [state.accounts,state.devices,state.sessions] = await Promise.all([api("accounts"),api("devices"),api("sessions")]);
+        const [accounts,devices,sessions,connection] = await Promise.all([api("accounts"),api("devices"),api("sessions"),api("connectors")]);
+        Object.assign(state,{accounts,devices,sessions,connectors:connection.connectors,configured:connection.configured,loadedAt:new Date()});
         state.loadError=false;
         render();
       } catch (e) {
         state.loadError=true;
         console.error("Failed to load account-management data",e);
         render();
+      } finally {
+        refreshing=false; $("#refreshButton").disabled=false;
       }
     }
-    const date = value => value ? new Date(value.replace(" ","T")+"Z").toLocaleString("zh-CN",{hour12:false}) : "—";
+    const date = value => { if(!value)return "—"; const normalized=value.replace(" ","T"); const parsed=new Date(/[zZ]$|[+-]\d{2}:\d{2}$/.test(normalized)?normalized:normalized+"Z"); return Number.isNaN(parsed.getTime())?"—":parsed.toLocaleString("zh-CN",{hour12:false}); };
     function pill(status) { return `<span class="pill ${safe(status)}">${safe(labels[status] || status)}</span>`; }
     function render() {
+      document.body.dataset.view=state.view;
+      document.querySelectorAll('.tab').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));
       $("#accountCount").textContent=state.loadError?"—":state.accounts.length; $("#deviceCount").textContent=state.loadError?"—":state.devices.length;
       $("#sessionCount").textContent=state.loadError?"—":state.sessions.filter(s=>s.status==="active").length;
       const q=$("#search").value.trim().toLowerCase();
       const configs={
         accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td><button class="secondary" data-edit-account="${x.id}">编辑名称</button> <button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${x.id}" data-kind="accounts">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
-        devices:{title:"设备",placeholder:"搜索设备",add:"登记设备",cols:["设备名称","厂商 / 型号","系统版本","连接状态","最后在线","电量","设备状态","操作"],data:state.devices.filter(x=>`${x.name} ${x.manufacturer} ${x.model} ${x.os} ${x.os_version} ${x.agent_name}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.name)}${x.agent_name?`<div class="sub">连接器：${safe(x.agent_name)}</div>`:""}</td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||"—"}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||"—"}</td><td>${pill(x.connection_status||'unpaired')}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}</td><td>${pill(x.status)}</td><td><button class="secondary" data-status="${x.status==='disabled'?'available':'disabled'}" data-id="${x.id}" data-kind="devices">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
+        devices:{title:"设备",placeholder:"搜索名称、型号或连接地址",add:"手动登记",cols:["设备名称","厂商 / 型号","系统 / 分辨率","连接状态","最后在线","电量","设备状态","操作"],data:state.devices.filter(x=>`${x.name} ${x.manufacturer} ${x.model} ${x.os} ${x.os_version} ${x.agent_name} ${x.adb_address||''}`.toLowerCase().includes(q)&&(!$("#connectionFilter").value||x.connection_status===$("#connectionFilter").value)),row:x=>`<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||"—"}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||"—"}<div class="sub">${safe(x.screen_resolution)||"—"}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div></td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td><button class="secondary" data-device-detail="${safe(x.id)}">详情</button> <button class="secondary" data-edit-device="${safe(x.id)}">编辑</button></td></tr>`},
         sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"登记登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?`<button class="secondary" data-status="ended" data-id="${x.id}" data-kind="sessions">结束记录</button> <button class="secondary" data-status="verification_needed" data-id="${x.id}" data-kind="sessions">需验证</button>`:"—"}</td></tr>`}
       };
       const c=configs[state.view]; $("#viewTitle").textContent=c.title; $("#search").placeholder=c.placeholder; $("#addButton").textContent=c.add;
-      $("#viewNotice").textContent=state.view==="accounts"?"手机号（国家/地区号 + 手机号）作为工作账号主体。当前不做号码格式正则校验；请勿在此录入密码、Cookie 或验证码。":state.view==="devices"?"网页不能直接读取朋友电脑上通过 USB 连接的设备。设备在线状态和遥测信息需要朋友运行本地连接器，由连接器经认证 HTTPS 主动上报到共享云端；当前先登记设备资料，连接器接口待开发朋友提供。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
+      $("#viewNotice").textContent=state.view==="accounts"?"手机号（国家/地区号 + 手机号）作为工作账号主体。当前不做号码格式正则校验；请勿在此录入密码、Cookie 或验证码。":state.view==="devices"?"连接手机并运行本机连接器后，设备资料自动入库。名称、备注和可用 / 维护 / 停用状态可手动编辑，自动同步会保留这些设置。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
+      const isDevices=state.view==="devices";
+      $("#connectionFilter").hidden=!isDevices; $("#deviceSummary").hidden=!isDevices; $("#connectorPanel").hidden=!isDevices;
+      $("#deviceSummary").textContent=state.loadError?'设备状态暂不可用':`共 ${state.devices.length} 台 · 在线 ${state.devices.filter(d=>d.connection_status==='online').length} · 需检查 ${state.devices.filter(d=>d.connection_status==='attention').length} · 离线 ${state.devices.filter(d=>d.connection_status==='offline').length}`;
+      $("#syncTime").textContent=state.loadError?'刷新失败，请重试':state.loadedAt?`更新于 ${state.loadedAt.toLocaleTimeString('zh-CN',{hour12:false})}`:'';
+      const appiumLabels={ready:'服务可用',unavailable:'服务不可用',not_configured:'未接入'};
+      $("#connectorList").innerHTML=state.loadError?'<div class="notice">连接器信息加载失败。</div>':state.connectors.length?state.connectors.map(c=>`<div class="connector-card"><strong>${safe(c.name)} ${pill(c.status)}</strong><div class="sub">最近上报：${date(c.last_seen_at)}</div><div>最近发现 ${safe(c.device_count)} 台设备 · Appium ${safe(appiumLabels[c.appium_status]||c.appium_status)}</div>${c.last_error?`<div class="danger">${safe(c.last_error)}</div>`:''}</div>`).join(''):`<div class="notice">${state.configured?'尚无连接器上报。请在本机启动设备连接器，已授权设备会自动出现在这里。':'连接器尚未启用，请先配置服务端连接器密钥，再启动本机连接器。'}</div>`;
       $("#head").innerHTML=`<tr>${c.cols.map(t=>`<th>${t}</th>`).join("")}</tr>`;
-      $("#rows").innerHTML=state.loadError?`<tr><td class="empty" colspan="${c.cols.length}">暂时无法加载数据。<button class="secondary" id="retryLoad">重试</button></td></tr>`:c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">暂无记录。使用“${c.add}”开始登记。</td></tr>`;
+      $("#rows").innerHTML=state.loadError?`<tr><td class="empty" colspan="${c.cols.length}">暂时无法加载数据。<button class="secondary" id="retryLoad">重试</button></td></tr>`:c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">${q||isDevices&&$("#connectionFilter").value?'没有符合筛选条件的记录。':isDevices?'尚未接入设备。启动本机连接器后自动发现并保存。':`暂无记录。使用“${c.add}”开始登记。`}</td></tr>`;
     }
-    function openForm(account=null) {
+    function openForm(account=null,device=null) {
       const fields=$("#fields"); fields.innerHTML="";
       const add=(label,name,placeholder="",type="text",required=false)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<input name="${name}" type="${type}" placeholder="${placeholder}" ${required?'required':''}></label>`)};
       const select=(label,name,items)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<select name="${name}">${items.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></label>`)};
       if(state.view==="accounts" && account) { $("#formTitle").textContent="编辑显示名称"; add("显示名称","display_name","","text",false); }
       else if(state.view==="accounts") { $("#formTitle").textContent="添加工作账号"; select("国家 / 地区号","phone_country_code",[["+86","中国大陆 +86"],["+852","中国香港 +852"],["+853","中国澳门 +853"],["+886","中国台湾 +886"],["+1","美国 / 加拿大 +1"],["+44","英国 +44"],["+61","澳大利亚 +61"],["+81","日本 +81"],["+82","韩国 +82"],["+65","新加坡 +65"],["+60","马来西亚 +60"],["+other","其他 / 自定义"]]); fields.insertAdjacentHTML("beforeend","<label id='customCodeLabel' hidden>自定义国家 / 地区号<input name='custom_country_code' placeholder='+33'></label>"); add("手机号","phone_number","输入号码，不做格式正则校验","tel",true); add("显示名称","display_name"); add("备注","notes"); }
-      if(state.view==="devices") { $("#formTitle").textContent="登记设备"; add("设备名称","name","如：朋友工作机 01","text",true); add("设备厂商","manufacturer"); add("型号","model"); add("系统","os","如：Android"); add("系统版本","os_version"); add("备注","notes"); fields.insertAdjacentHTML("beforeend","<div class='notice'>连接状态、电量、分辨率和最后在线时间将由后续的本地连接器上报；网页本身不能扫描远端电脑的 USB / ADB 设备。</div>"); }
+      if(state.view==="devices") { $("#formTitle").textContent=device?"编辑设备":"手动登记设备"; add("设备名称","name","如：工作机 01","text",true); if(device){select("设备状态","status",[['available','可用'],['maintenance','维护中'],['disabled','停用']]);}else{add("设备厂商","manufacturer"); add("型号","model"); add("系统","os","如：Android"); add("系统版本","os_version");} add("备注","notes"); if(device){for(const field of ['name','notes','status'])fields.querySelector(`[name='${field}']`).value=device[field]||'';}else{fields.insertAdjacentHTML("beforeend","<div class='notice'>连接器发现的新设备会自动建档，此处用于登记尚未接入的设备。</div>");} }
       if(state.view==="sessions") {
         $("#formTitle").textContent="登记登录";
         select("工作账号","account_id",state.accounts.filter(x=>x.status!=="disabled").map(x=>[x.id,x.handle]));
@@ -117,15 +115,18 @@
       }
       $("#dialog").showModal();
     }
-    document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("active",x===b));render();}));
-    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",()=>{editingAccountId=null;openForm();}); $("#cancel").addEventListener("click",()=>{editingAccountId=null;$("#dialog").close();});
+    document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;history.replaceState(null,'',`#${state.view}`);render();}));
+    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",()=>{editingAccountId=null;editingDeviceId=null;openForm();}); $("#cancel").addEventListener("click",()=>{$("#dialog").close();});
+    $("#connectionFilter").addEventListener('change',render); $("#refreshButton").addEventListener('click',refresh); $("#closeDevice").addEventListener('click',()=>$("#deviceDialog").close());
     $("#rows").addEventListener("click",e=>{if(e.target.closest("#retryLoad"))refresh();});
-    $("#copyContract").addEventListener("click",async()=>{try{await navigator.clipboard.writeText($("#deviceContract").textContent.trim());$("#copyStatus").textContent="示例 JSON 已复制。当前它是字段草案，不是可调用的 API 请求。";}catch{$("#copyStatus").textContent="浏览器未允许剪贴板访问，请手动复制上方 JSON。";}});
     $("#fields").addEventListener("change",e=>{if(e.target.name==="phone_country_code"){$("#customCodeLabel").hidden=e.target.value!=="+other";}});
-    let editingAccountId=null;
-    $("#form").addEventListener("submit",async e=>{e.preventDefault();const form=e.currentTarget;const data=Object.fromEntries(new FormData(form));if(data.phone_country_code==="+other")data.phone_country_code=data.custom_country_code.trim();delete data.custom_country_code;try{if(editingAccountId){await api(`accounts/${editingAccountId}`,{method:"PATCH",body:JSON.stringify({display_name:data.display_name||""})});editingAccountId=null;}else{await api(state.view,{method:"POST",body:JSON.stringify(data)});}$("#dialog").close();form.reset();await refresh();}catch(err){alert(err.message);}});
+    let editingAccountId=null,editingDeviceId=null;
+    $("#dialog").addEventListener('close',()=>{editingAccountId=null;editingDeviceId=null;});
+    $("#form").addEventListener("submit",async e=>{e.preventDefault();const form=e.currentTarget;const submit=form.querySelector('button:not([type])');submit.disabled=true;const data=Object.fromEntries(new FormData(form));if(data.phone_country_code==="+other")data.phone_country_code=data.custom_country_code.trim();delete data.custom_country_code;try{if(editingDeviceId){await api(`devices/${editingDeviceId}`,{method:"PATCH",body:JSON.stringify(data)});editingDeviceId=null;}else if(editingAccountId){await api(`accounts/${editingAccountId}`,{method:"PATCH",body:JSON.stringify({display_name:data.display_name||""})});editingAccountId=null;}else{await api(state.view,{method:"POST",body:JSON.stringify(data)});}$("#dialog").close();form.reset();await refresh();}catch(err){alert(err.message);}finally{submit.disabled=false;}});
+    $("#rows").addEventListener('click',e=>{const edit=e.target.closest('[data-edit-device]');if(edit){const d=state.devices.find(x=>x.id===edit.dataset.editDevice);if(!d)return;editingAccountId=null;editingDeviceId=d.id;openForm(null,d);return;}const detail=e.target.closest('[data-device-detail]');if(!detail)return;const d=state.devices.find(x=>x.id===detail.dataset.deviceDetail);if(!d)return;const pairs=[['设备名称',d.name],['设备状态',labels[d.status]],['连接状态',labels[d.connection_status]],['厂商 / 型号',[d.manufacturer,d.model].filter(Boolean).join(' / ')],['系统',[d.os,d.os_version,d.sdk_version?`SDK ${d.sdk_version}`:''].filter(Boolean).join(' ')],['分辨率',d.screen_resolution],['电量',d.battery_percent==null?'—':`${d.battery_percent}%`],['充电状态',d.charging==null?'未知':d.charging?'充电中':'未充电'],['连接方式',({wireless:'无线',usb:'USB',emulator:'模拟器'})[d.connection_type]],['连接地址',d.adb_address],['ADB 状态',d.adb_state],['连接器',d.agent_name],['最近在线',date(d.last_seen_at)],['最近采集',date(d.collected_at)],['设备引用',d.device_ref],['采集异常',d.collection_error],['备注',d.notes]];$("#deviceDetails").innerHTML=pairs.map(([k,v])=>`<dt>${safe(k)}</dt><dd>${safe(v||'—')}</dd>`).join('');$("#deviceDialog").showModal();});
     $("#rows").addEventListener("click",async e=>{const edit=e.target.closest("button[data-edit-account]");if(edit){const account=state.accounts.find(x=>x.id===edit.dataset.editAccount);if(!account)return;editingAccountId=account.id;openForm(account);$("#fields input[name='display_name']").value=account.display_name||"";return;}const b=e.target.closest("button[data-id]");if(!b)return;try{await api(`${b.dataset.kind}/${b.dataset.id}`,{method:"PATCH",body:JSON.stringify({status:b.dataset.status})});await refresh();}catch(err){alert(err.message);}});
     refresh();
+    setInterval(()=>{if(!document.hidden)refresh();},10000);
   </script>
 </body>
 </html>

@@ -1,0 +1,12 @@
+{
+  "name": "account-management-mvp",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs",
+    "connector": "node connector/adb-connector.mjs",
+    "prepare:deploy": "node prepare-deploy.mjs",
+    "setup:local": "node setup-local.mjs"
+  }
+}

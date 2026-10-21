@@ -1,0 +1,5 @@
+/connector/* /404.html 200
+/tests/* /404.html 200
+/migrations/* /404.html 200
+/schema.sql /404.html 200
+/wrangler.toml /404.html 200

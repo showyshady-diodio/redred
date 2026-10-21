@@ -5,3 +5,7 @@ node_modules/
 .dev.vars
 .dev.vars.*
 *.log
+connector/connector.local.json
+connector/*.local.json
+connector/.state/
+tests/.state/
