@@ -45,12 +45,32 @@ export function inspectNote(xml,activity,title,author){
   const authorMatched=nodes.some(n=>n['resource-id']?.endsWith('/nickNameTV')&&normalize(n.text)===normalize(author)&&(bounds(n)?.[1]??height)<height*0.25);
   const titleMatched=nodes.some(n=>normalize(n.text||'').includes(normalize(title)));
   if(!titleMatched||!authorMatched)throw new Error('The note title/author does not match the requested target; no action taken');
-  const buttons=nodes.filter(n=>n.class==='android.widget.Button'&&n.clickable==='true'&&n.enabled==='true'&&n.displayed!=='false'&&/^((取消|已)?点赞|Unlike|Like)(?:\s|\d|$)/i.test(n['content-desc']||'')&&(bounds(n)?.[1]||0)>height*0.7);
-  if(buttons.length!==1)return {title_matched:true,author_matched:true,like_state:'unknown',like_button:null};
-  const node=buttons[0],label=node['content-desc'];
-  const liked=/^(取消点赞|已点赞|Unlike)/i.test(label)||node.selected==='true';
-  const b=bounds(node);if(!b||b[2]<=b[0]||b[3]<=b[1])throw new Error('Invalid like button bounds');
-  return {title_matched:true,author_matched:true,like_state:liked?'liked':'not_liked',like_button:{label,x:Math.round((b[0]+b[2])/2),y:Math.round((b[1]+b[3])/2)}};
+  const action=(pattern,positive,yes,no)=>{
+    const buttons=nodes.filter(n=>n.class==='android.widget.Button'&&n.clickable==='true'&&n.enabled==='true'&&n.displayed!=='false'&&pattern.test(n['content-desc']||'')&&(bounds(n)?.[1]||0)>height*0.7);
+    if(buttons.length!==1)return {state:'unknown',button:null};
+    const node=buttons[0],label=node['content-desc'],b=bounds(node);
+    if(!b||b[2]<=b[0]||b[3]<=b[1])throw new Error('Invalid action button bounds');
+    return {state:positive.test(label)||node.selected==='true'?yes:no,button:{label,x:Math.round((b[0]+b[2])/2),y:Math.round((b[1]+b[3])/2)}};
+  };
+  const like=action(/^((取消|已)?点赞|Unlike|Like)(?:\s|\d|$)/i,/^(取消点赞|已点赞|Unlike)/i,'liked','not_liked');
+  const collect=action(/^((取消|已)?收藏|Unsave|Save|Uncollect|Collect|Unfavorite|Favorite)(?:\s|\d|$)/i,/^(取消收藏|已收藏|Unsave|Uncollect|Unfavorite)/i,'collected','not_collected');
+  return {title_matched:true,author_matched:true,like_state:like.state,like_button:like.button,collect_state:collect.state,collect_button:collect.button};
+}
+
+export async function ensureAction(kind,inspect,click,checkReady,delay=sleep){
+  if(!['like','collect'].includes(kind))throw new Error('Unsupported action');
+  const expected=kind==='like'?'liked':'collected',stateKey=kind+'_state';
+  const before=await inspect();
+  if(before[stateKey]==='unknown'||!before[kind+'_button'])throw new Error(`${kind} state is ambiguous; no click performed`);
+  if(before[stateKey]===expected)return {action:'already_'+expected,before,after:before};
+  await checkReady();
+  await click(before[kind+'_button']);
+  let after;
+  for(let attempt=0;attempt<4;attempt++){
+    await delay(1000);after=await inspect();
+    if(after[stateKey]===expected)return {action:'clicked_once',before,after};
+  }
+  throw new Error(`${kind} result is not confirmed; no automatic retry`);
 }
 
 export async function appiumCall(base,path,method='GET',data){
@@ -60,7 +80,7 @@ export async function appiumCall(base,path,method='GET',data){
 
 export async function main(){
   const args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?'':args[i+1]||'';};
-  if(!option('--url')||!option('--title')||!option('--author'))throw new Error('Required: --url NOTE_URL --title TITLE --author AUTHOR; optional: --like');
+  if(!option('--url')||!option('--title')||!option('--author'))throw new Error('Required: --url NOTE_URL --title TITLE --author AUTHOR; optional: --like --collect');
   const configPath=resolve(option('--config')||resolve(here,'connector.production.local.json'));
   const config=JSON.parse(await readFile(configPath,'utf8'));await configureNetwork(config);
   const api=new URL(config.api_url);if(api.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(api.hostname))throw new Error('Invalid API URL');
@@ -92,7 +112,8 @@ export async function main(){
   let running='';try{running=await adb('-s',serial,'shell','pidof','io.appium.uiautomator2.server');}catch(error){if(error.code!==1)throw error;}
   if(running.trim())throw new Error('The selected phone already has an automation session; finish it first');
   const note=await resolveNoteUrl(option('--url'));
-  const report={device_id:device.id,account_id:account.id,login_confirmation:'operator',note_id:note.id,expected_title:option('--title'),expected_author:option('--author'),requested_action:args.includes('--like')?'ensure_liked':'inspect',started_at:new Date().toISOString()};
+  const actions=['like','collect'].filter(kind=>args.includes('--'+kind));
+  const report={device_id:device.id,account_id:account.id,login_confirmation:'operator',note_id:note.id,expected_title:option('--title'),expected_author:option('--author'),requested_action:actions.length?'ensure_'+actions.join('_and_'):'inspect',actions:{},started_at:new Date().toISOString()};
   const output=resolve(here,'../../../work/script-tests',new Date().toISOString().replace(/[:.]/g,'-'));
   await mkdir(output,{recursive:true});let sessionId;
   try{
@@ -104,19 +125,15 @@ export async function main(){
     while(Date.now()<deadline){try{page=await inspect();break;}catch(error){lastError=error.message;await sleep(750);}}
     if(!page)throw new Error(`The expected note did not appear within 30 seconds: ${lastError||'page unavailable'}`);
     report.before=page;await writeFile(resolve(output,'before.png'),Buffer.from(await appiumCall(base,path+'/screenshot'),'base64'));
-    if(args.includes('--like')){
-      page=await inspect();
-      if(page.like_state==='unknown')throw new Error('Like state is ambiguous; no click performed');
-      if(page.like_state==='liked')report.action='already_liked';
-      else{
-        const current=await get(`devices/${device.id}`);if(current.connection_mode!=='active')throw new Error('Device was paused; no click performed');
-        await appiumCall(base,path+'/execute/sync','POST',{script:'mobile: clickGesture',args:[{x:page.like_button.x,y:page.like_button.y}]});
-        report.action='clicked_once';await sleep(1200);
-      }
-      report.after=await inspect();
-      if(report.after.like_state!=='liked')throw new Error('Like result is not confirmed; no automatic retry');
-      await writeFile(resolve(output,'after.png'),Buffer.from(await appiumCall(base,path+'/screenshot'),'base64'));
+    for(const kind of actions){
+      report.current_action=kind;
+      report.actions[kind]=await ensureAction(kind,inspect,button=>appiumCall(base,path+'/execute/sync','POST',{script:'mobile: clickGesture',args:[{x:button.x,y:button.y}]}),async()=>{
+        const current=await get(`devices/${device.id}`);if(current.connection_mode!=='active'||current.status!=='available')throw new Error('Device was paused or disabled; no click performed');
+      });
+      report.after=report.actions[kind].after;
+      await writeFile(resolve(output,`after-${kind}.png`),Buffer.from(await appiumCall(base,path+'/screenshot'),'base64'));
     }
+    delete report.current_action;
     report.status='passed';
   }catch(error){
     report.status='failed';report.error=error.message;
