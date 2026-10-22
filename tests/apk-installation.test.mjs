@@ -9,6 +9,7 @@ import { onRequestPost as enqueue,onRequestGet as list } from '../functions/api/
 import { onRequestGet as catalog } from '../functions/api/apks.js';
 import { deviceRef } from '../connector/adb-connector.mjs';
 import { scanPackages,installTask } from '../connector/apk-installer.mjs';
+import { onRequestPost as confirmLogin,onRequestPatch as changeLogin } from '../functions/api/sessions/[[id]].js';
 
 const secret='test-installation-token-01234567890123456789';
 async function database(){
@@ -88,4 +89,28 @@ test('local executor checks hash and physical identity, respects pause, and dist
     assert.equal((await installTask(task,packages,adb,active)).status,'failed');
     assert.equal(calls.filter(c=>c.includes('install')).length,before);
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('manual login requires authorization and explicit confirmation, deduplicates and replaces only the target device platform binding',async()=>{
+  const {db,env}=await database();
+  try{
+    db.exec("INSERT INTO work_accounts(id,handle,phone_number)VALUES('account-a','a','111'),('account-b','b','222');");
+    const data={account_id:'account-a',device_id:'phone',login_confirmed:true};
+    assert.equal((await confirmLogin({env,request:request(data,true,'bad')})).status,401);
+    assert.equal((await confirmLogin({env,request:request({...data,login_confirmed:false},true)})).status,400);
+    assert.equal((await confirmLogin({env,request:request(data,true)})).status,201);
+    assert.equal((await confirmLogin({env,request:request(data,true)})).status,200);
+    assert.equal(db.prepare('SELECT COUNT(*) AS n FROM account_device_sessions').get().n,1);
+    db.exec("UPDATE devices SET connection_mode='paused'");
+    assert.equal((await confirmLogin({env,request:request({...data,account_id:'account-b'},true)})).status,409);
+    db.exec("UPDATE devices SET connection_mode='active'; UPDATE work_accounts SET status='disabled' WHERE id='account-b'");
+    assert.equal((await confirmLogin({env,request:request({...data,account_id:'account-b'},true)})).status,409);
+    db.exec("UPDATE work_accounts SET status='verification_needed' WHERE id='account-b'");
+    assert.equal((await confirmLogin({env,request:request({...data,account_id:'account-b'},true)})).status,201);
+    assert.equal(db.prepare("SELECT status FROM account_device_sessions WHERE account_id='account-a'").get().status,'ended');
+    assert.equal(db.prepare("SELECT status FROM work_accounts WHERE id='account-b'").get().status,'active');
+    const current=db.prepare("SELECT id FROM account_device_sessions WHERE status='active'").get();
+    assert.equal((await changeLogin({env,params:{id:current.id},request:request({status:'ended'},true,'bad')})).status,401);
+    assert.equal((await changeLogin({env,params:{id:current.id},request:request({status:'ended'},true)})).status,200);
+  }finally{db.close();}
 });

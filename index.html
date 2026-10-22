@@ -105,7 +105,7 @@
     function deviceRow(x) {
       let controls=x.connector_id&&x.connection_type==='wireless'?` <button class="secondary" data-device-control="${safe(x.id)}" data-connection-action="${x.connection_mode==='paused'?'resume':'pause'}">${x.connection_mode==='paused'?'恢复连接':'暂停连接'}</button>`:'';
       const install=x.connector_id?` <button class="secondary" data-install-device="${safe(x.id)}">安装 APK</button>`:'';
-      controls+=install;
+      controls+=install+` <button class="secondary" data-login-device="${safe(x.id)}">账号登录</button>`;
       const detail=x.control_error?`<div class="sub danger">${safe(x.control_error)}</div>`:['pausing','resuming'].includes(x.connection_status)?'<div class="sub">等待连接器执行</div>':'';
       return `<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||'—'}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||'—'}<div class="sub">${safe(x.screen_resolution)||'—'}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div>${detail}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td>${rowActions(`<button class="secondary" data-device-detail="${safe(x.id)}">详情</button>`,`<button class="secondary" data-edit-device="${safe(x.id)}">编辑设备</button>${controls}`,`device-${x.id}`,x.name)}</td></tr>`;
     }
@@ -118,7 +118,7 @@
       const configs={
         accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td>${rowActions(`<button class="secondary" data-edit-account="${safe(x.id)}">编辑名称</button>`,`<button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${safe(x.id)}" data-kind="accounts">${x.status==='disabled'?'启用账号':'停用账号'}</button>`,`account-${x.id}`,x.display_name||'账号')}</td></tr>`},
         devices:{title:"设备",placeholder:"搜索名称、型号或连接地址",add:"手动登记",cols:["设备名称","厂商 / 型号","系统 / 分辨率","连接状态","最后在线","电量（最近采集）","设备状态","操作"],data:state.devices.filter(x=>`${x.name} ${x.manufacturer} ${x.model} ${x.os} ${x.os_version} ${x.agent_name} ${x.adb_address||''}`.toLowerCase().includes(q)&&(!$("#connectionFilter").value||x.connection_status===$("#connectionFilter").value)),row:deviceRow},
-        sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"登记登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?rowActions(`<button class="secondary" data-status="ended" data-id="${safe(x.id)}" data-kind="sessions">结束记录</button>`,`<button class="secondary" data-status="verification_needed" data-id="${safe(x.id)}" data-kind="sessions">标记需验证</button>`,`session-${x.id}`,'登录记录'):"—"}</td></tr>`}
+        sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"指定账号登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?rowActions(`<button class="secondary" data-status="ended" data-id="${safe(x.id)}" data-kind="sessions">结束记录</button>`,`<button class="secondary" data-status="verification_needed" data-id="${safe(x.id)}" data-kind="sessions">标记需验证</button>`,`session-${x.id}`,'登录记录'):"—"}</td></tr>`}
       };
       const c=configs[state.view]; $("#viewTitle").textContent=c.title; $("#search").placeholder=c.placeholder; $("#addButton").textContent=c.add;
       $("#viewNotice").textContent=state.view==="accounts"?"手机号（国家/地区号 + 手机号）作为工作账号主体。当前不做号码格式正则校验；请勿在此录入密码、Cookie 或验证码。":state.view==="devices"?"连接手机并运行本机连接器后，设备资料自动入库。名称、备注和可用 / 维护 / 停用状态可手动编辑，自动同步会保留这些设置。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
@@ -134,19 +134,32 @@
     function openForm(account=null,device=null) {
       const fields=$("#fields"); fields.innerHTML="";
       const add=(label,name,placeholder="",type="text",required=false)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<input name="${name}" type="${type}" placeholder="${placeholder}" ${required?'required':''}></label>`)};
-      const select=(label,name,items)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<select name="${name}">${items.map(([v,t])=>`<option value="${v}">${t}</option>`).join("")}</select></label>`)};
+      const select=(label,name,items)=>{fields.insertAdjacentHTML("beforeend",`<label>${label}<select name="${name}" required>${items.map(([v,t])=>`<option value="${safe(v)}">${safe(t)}</option>`).join("")}</select></label>`)};
       if(state.view==="accounts" && account) { $("#formTitle").textContent="编辑显示名称"; add("显示名称","display_name","","text",false); }
       else if(state.view==="accounts") { $("#formTitle").textContent="添加工作账号"; select("国家 / 地区号","phone_country_code",[["+86","中国大陆 +86"],["+852","中国香港 +852"],["+853","中国澳门 +853"],["+886","中国台湾 +886"],["+1","美国 / 加拿大 +1"],["+44","英国 +44"],["+61","澳大利亚 +61"],["+81","日本 +81"],["+82","韩国 +82"],["+65","新加坡 +65"],["+60","马来西亚 +60"],["+other","其他 / 自定义"]]); fields.insertAdjacentHTML("beforeend","<label id='customCodeLabel' hidden>自定义国家 / 地区号<input name='custom_country_code' placeholder='+33'></label>"); add("手机号","phone_number","输入号码，不做格式正则校验","tel",true); add("显示名称","display_name"); add("备注","notes"); }
       if(state.view==="devices") { $("#formTitle").textContent=device?"编辑设备":"手动登记设备"; add("设备名称","name","如：工作机 01","text",true); if(device){select("设备状态","status",[['available','可用'],['maintenance','维护中'],['disabled','停用']]);}else{add("设备厂商","manufacturer"); add("型号","model"); add("系统","os","如：Android"); add("系统版本","os_version");} add("备注","notes"); if(device){for(const field of ['name','notes','status'])fields.querySelector(`[name='${field}']`).value=device[field]||'';}else{fields.insertAdjacentHTML("beforeend","<div class='notice'>连接器发现的新设备会自动建档，此处用于登记尚未接入的设备。</div>");} }
       if(state.view==="sessions") {
-        $("#formTitle").textContent="登记登录";
-        select("工作账号","account_id",state.accounts.filter(x=>x.status!=="disabled").map(x=>[x.id,x.handle]));
-        select("设备","device_id",state.devices.filter(x=>x.status==="available").map(x=>[x.id,x.name]));
-        add("备注","note","由谁确认、异常说明等");
-        if(!state.accounts.length||!state.devices.some(x=>x.status==="available")) fields.insertAdjacentHTML("beforeend","<div class='notice'>需要先登记工作账号和可用设备。</div>");
+        $("#formTitle").textContent="指定账号手工登录";
+        select("工作账号","account_id",state.accounts.filter(x=>['active','verification_needed'].includes(x.status)).map(x=>[x.id,[x.display_name,x.phone_country_code,x.phone_number].filter(Boolean).join(' ')]));
+        select("目标设备","device_id",state.devices.filter(x=>x.status==='available'&&x.connection_mode==='active'&&x.connection_status==='online').map(x=>[x.id,x.name]));
+        fields.insertAdjacentHTML('beforeend',`<div class="notice" id="loginGuide"></div><label style="display:flex;align-items:flex-start;gap:8px"><input name="login_confirmed" type="checkbox" required style="margin-top:3px">我已在选定手机完成登录，并核对当前登录账号与所选工作账号一致。</label>`);
+        add('设备控制码','device_control_code','本标签页已授权时可留空','password',!controlCode);
+        add("备注","note","本次登录确认说明");
+        updateLoginGuide();
       }
       $("#dialog").showModal();
     }
+    function updateLoginGuide(){
+      const guide=$('#loginGuide');if(!guide)return;
+      const account=state.accounts.find(a=>a.id===$('#fields [name="account_id"]')?.value),device=state.devices.find(d=>d.id===$('#fields [name="device_id"]')?.value);
+      guide.textContent=account&&device?`请在 ${device.name} 的小红书中，使用 ${account.phone_country_code} ${account.phone_number} 完成登录，短信验证码直接在手机输入。核对“我”页面后再勾选确认并保存。本步骤为手工登录，不会自动切换账号。`:'需要先有可用工作账号和在线、未暂停的设备。';
+    }
+    $('#fields').addEventListener('change',e=>{if(['account_id','device_id'].includes(e.target.name)){const checkbox=$('#fields [name="login_confirmed"]');if(checkbox)checkbox.checked=false;updateLoginGuide();}});
+    $('#rows').addEventListener('click',e=>{
+      const button=e.target.closest('[data-login-device]');if(!button)return;
+      state.view='sessions';history.replaceState(null,'','#sessions');render();editingAccountId=null;editingDeviceId=null;openForm();
+      const select=$('#fields [name="device_id"]');select.value=button.dataset.loginDevice;updateLoginGuide();
+    });
     document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;history.replaceState(null,'',`#${state.view}`);render();}));
     $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",()=>{editingAccountId=null;editingDeviceId=null;openForm();}); $("#cancel").addEventListener("click",()=>{$("#dialog").close();});
     $("#connectionFilter").addEventListener('change',render); $("#refreshButton").addEventListener('click',refresh); $("#closeDevice").addEventListener('click',()=>$("#deviceDialog").close());
@@ -154,8 +167,8 @@
     let pendingControl=null,controlCode='';
     try{controlCode=sessionStorage.getItem('deviceControlCode')||'';}catch{}
     function saveControlCode(value){controlCode=value;try{if(value)sessionStorage.setItem('deviceControlCode',value);else sessionStorage.removeItem('deviceControlCode');}catch{}}
-    function authorizeControl(control,message=''){pendingControl=control;$("#controlCode").value='';$("#controlError").textContent=message;$("#controlDialog").showModal();}
-    async function sendControl(control,code){await api(`devices/${control.id}`,{method:'PATCH',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify({connection_action:control.action})});await refresh();}
+    function authorizeControl(control,message=''){pendingControl=control;$('#controlDialog h2').textContent=control.kind==='sessions'?'授权登录记录操作':'授权设备连接管理';$('#controlDialog .notice').textContent=control.kind==='sessions'?'此操作会更新人工确认的登录记录，不会替你退出或切换手机上的账号。':'暂停和恢复会改变手机与电脑的连接。输入本机保存的设备控制码后，本标签页可继续操作。';$("#controlCode").value='';$("#controlError").textContent=message;$("#controlDialog").showModal();}
+    async function sendControl(control,code){await api(`${control.kind==='sessions'?'sessions':'devices'}/${control.id}`,{method:'PATCH',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(control.kind==='sessions'?{status:control.action}:{connection_action:control.action})});await refresh();}
     $("#rows").addEventListener('click',async e=>{
       const button=e.target.closest('[data-device-control]');if(!button)return;
       const control={id:button.dataset.deviceControl,action:button.dataset.connectionAction};
@@ -177,9 +190,20 @@
     $("#fields").addEventListener("change",e=>{if(e.target.name==="phone_country_code"){$("#customCodeLabel").hidden=e.target.value!=="+other";}});
     let editingAccountId=null,editingDeviceId=null;
     $("#dialog").addEventListener('close',()=>{editingAccountId=null;editingDeviceId=null;});
-    $("#form").addEventListener("submit",async e=>{e.preventDefault();const form=e.currentTarget;const submit=form.querySelector('button:not([type])');submit.disabled=true;const data=Object.fromEntries(new FormData(form));if(data.phone_country_code==="+other")data.phone_country_code=data.custom_country_code.trim();delete data.custom_country_code;try{if(editingDeviceId){await api(`devices/${editingDeviceId}`,{method:"PATCH",body:JSON.stringify(data)});editingDeviceId=null;}else if(editingAccountId){await api(`accounts/${editingAccountId}`,{method:"PATCH",body:JSON.stringify({display_name:data.display_name||""})});editingAccountId=null;}else{await api(state.view,{method:"POST",body:JSON.stringify(data)});}$("#dialog").close();form.reset();await refresh();}catch(err){alert(err.message);}finally{submit.disabled=false;}});
+    $("#form").addEventListener("submit",async e=>{
+      e.preventDefault();const form=e.currentTarget,submit=form.querySelector('button:not([type])');submit.disabled=true;
+      const data=Object.fromEntries(new FormData(form));if(data.phone_country_code==="+other")data.phone_country_code=data.custom_country_code.trim();delete data.custom_country_code;
+      const code=data.device_control_code?.trim()||controlCode;delete data.device_control_code;
+      if(state.view==='sessions')data.login_confirmed=data.login_confirmed==='on';
+      try{
+        if(editingDeviceId){await api(`devices/${editingDeviceId}`,{method:'PATCH',body:JSON.stringify(data)});editingDeviceId=null;}
+        else if(editingAccountId){await api(`accounts/${editingAccountId}`,{method:'PATCH',body:JSON.stringify({display_name:data.display_name||''})});editingAccountId=null;}
+        else{await api(state.view,{method:'POST',...(state.view==='sessions'?{headers:{'content-type':'application/json','x-device-control-token':code}}:{}),body:JSON.stringify(data)});if(state.view==='sessions')saveControlCode(code);}
+        $('#dialog').close();form.reset();await refresh();
+      }catch(error){if(error.status===401)saveControlCode('');alert(error.message);}finally{submit.disabled=false;}
+    });
     $("#rows").addEventListener('click',e=>{const edit=e.target.closest('[data-edit-device]');if(edit){const d=state.devices.find(x=>x.id===edit.dataset.editDevice);if(!d)return;editingAccountId=null;editingDeviceId=d.id;openForm(null,d);return;}const detail=e.target.closest('[data-device-detail]');if(!detail)return;const d=state.devices.find(x=>x.id===detail.dataset.deviceDetail);if(!d)return;const pairs=[['设备名称',d.name],['设备状态',labels[d.status]],['连接状态',labels[d.connection_status]],['厂商 / 型号',[d.manufacturer,d.model].filter(Boolean).join(' / ')],['系统',[d.os,d.os_version,d.sdk_version?`SDK ${d.sdk_version}`:''].filter(Boolean).join(' ')],['分辨率',d.screen_resolution],['电量',d.battery_percent==null?'—':`${d.battery_percent}%`],['充电状态',d.charging==null?'未知':d.charging?'充电中':'未充电'],['连接方式',({wireless:'无线',usb:'USB',emulator:'模拟器'})[d.connection_type]],['连接地址',d.adb_address],['ADB 状态',d.adb_state],['连接器',d.agent_name],['最近在线',date(d.last_seen_at)],['最近采集',date(d.collected_at)],['设备引用',d.device_ref],['采集异常',d.collection_error],['备注',d.notes]];$("#deviceDetails").innerHTML=pairs.map(([k,v])=>`<dt>${safe(k)}</dt><dd>${safe(v||'—')}</dd>`).join('');$("#deviceDialog").showModal();});
-    $("#rows").addEventListener("click",async e=>{const edit=e.target.closest("button[data-edit-account]");if(edit){const account=state.accounts.find(x=>x.id===edit.dataset.editAccount);if(!account)return;editingAccountId=account.id;openForm(account);$("#fields input[name='display_name']").value=account.display_name||"";return;}const b=e.target.closest("button[data-id]");if(!b)return;try{await api(`${b.dataset.kind}/${b.dataset.id}`,{method:"PATCH",body:JSON.stringify({status:b.dataset.status})});await refresh();}catch(err){alert(err.message);}});
+    $("#rows").addEventListener("click",async e=>{const edit=e.target.closest("button[data-edit-account]");if(edit){const account=state.accounts.find(x=>x.id===edit.dataset.editAccount);if(!account)return;editingAccountId=account.id;openForm(account);$("#fields input[name='display_name']").value=account.display_name||"";return;}const b=e.target.closest("button[data-id]");if(!b)return;try{if(b.dataset.kind==='sessions'){const control={kind:'sessions',id:b.dataset.id,action:b.dataset.status};if(!controlCode){authorizeControl(control);return;}await sendControl(control,controlCode);}else{await api(`${b.dataset.kind}/${b.dataset.id}`,{method:"PATCH",body:JSON.stringify({status:b.dataset.status})});await refresh();}}catch(error){if(error.status===401){saveControlCode('');authorizeControl({kind:'sessions',id:b.dataset.id,action:b.dataset.status},error.message);}else alert(error.message);}});
     $("#rows").addEventListener('click',e=>{
       const button=e.target.closest('[data-device-detail]');if(!button)return;
       const device=state.devices.find(d=>d.id===button.dataset.deviceDetail);if(!device)return;

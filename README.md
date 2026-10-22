@@ -1,5 +1,9 @@
 # MCN account management MVP
 
+## Selected-account manual login and Appium tests (2026-10-22)
+
+The existing Devices > More menu now includes Account login. Login confirmation requires a device control code, an online device and explicit operator confirmation after logging in on the phone. See [MANUAL-LOGIN-TESTING.md](MANUAL-LOGIN-TESTING.md) for setup and the physical-device script. This preserves the existing account and device records and does not add cloud phones or group tasks.
+
 ## Manual APK installation (2026-10-22)
 
 The existing Devices page now has an Install APK action per enrolled device. See [APK-INSTALLATION.md](APK-INSTALLATION.md) for the local installer, allowed file directories, authorization, and result handling. This uses local physical Android devices, without AWS. Apply only migration 0005 to existing databases; older migrations were applied directly and must not be replayed with `migrations apply`.
