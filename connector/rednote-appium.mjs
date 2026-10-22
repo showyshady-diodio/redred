@@ -1,6 +1,6 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {readFile,writeFile,mkdir} from 'node:fs/promises';
+import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {configureNetwork,parseDevices,deviceRef,validateControls} from './adb-connector.mjs';
@@ -164,7 +164,6 @@ export async function appiumCall(base,path,method='GET',data){
 export async function main(){
   const args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?'':args[i+1]||'';};
   if(!option('--url'))throw new Error('Required: --url NOTE_URL; optional: --title TITLE --author AUTHOR --auto-search --like --collect --follow');
-  if(Boolean(option('--title'))!==Boolean(option('--author')))throw new Error('Provide both --title and --author, or omit both for automatic discovery');
   const configPath=resolve(option('--config')||resolve(here,'connector.production.local.json'));
   const config=JSON.parse(await readFile(configPath,'utf8'));await configureNetwork(config);
   const api=new URL(config.api_url);if(api.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(api.hostname))throw new Error('Invalid API URL');
@@ -199,8 +198,10 @@ export async function main(){
   const actions=['like','collect','follow'].filter(kind=>args.includes('--'+kind));
   let title=option('--title'),author=option('--author');
   const report={device_id:device.id,account_id:account.id,login_confirmation:'operator',note_id:note.id,expected_title:title,expected_author:author,requested_action:actions.length?'ensure_'+actions.join('_and_'):'inspect',actions:{},navigation:[],started_at:new Date().toISOString()};
-  const output=resolve(here,'../../../work/script-tests',new Date().toISOString().replace(/[:.]/g,'-'));
+  const output=option('--output-dir')?resolve(option('--output-dir')):resolve(here,'../../../work/script-tests',new Date().toISOString().replace(/[:.]/g,'-'));
   await mkdir(output,{recursive:true});let sessionId;
+  const checkpoint=async()=>{await writeFile(resolve(output,'report.tmp'),JSON.stringify(report,null,2));await rename(resolve(output,'report.tmp'),resolve(output,'report.json'));};
+  report.status='running';await checkpoint();
   try{
     const session=await appiumCall(base,'/session','POST',{capabilities:{alwaysMatch:{platformName:'Android','appium:automationName':'UiAutomator2','appium:udid':serial,'appium:noReset':true,'appium:autoLaunch':false,'appium:ignoreHiddenApiPolicyError':true,'appium:skipDeviceInitialization':true,'appium:skipServerInstallation':true,'appium:skipUnlock':true,'appium:skipLogcatCapture':true,'appium:uiautomator2ServerLaunchTimeout':60000,'appium:newCommandTimeout':120},firstMatch:[{}]}});
     sessionId=session.sessionId;const path='/session/'+sessionId;
@@ -212,7 +213,14 @@ export async function main(){
       while(Date.now()<end){try{return await inspect();}catch(error){lastError=error.message;await sleep(750);}}
       throw new Error(`The expected note did not appear within 30 seconds: ${lastError||'page unavailable'}`);
     };
-    const checkReady=async()=>{const current=await get(`devices/${device.id}`);if(current.connection_mode!=='active'||current.status!=='available')throw new Error('Device was paused or disabled; no action performed');};
+    const checkReady=async()=>{
+      const [current,logins,allAccounts]=await Promise.all([get(`devices/${device.id}`),get('sessions'),get('accounts')]);
+      if(current.connection_mode!=='active'||current.status!=='available'||!allAccounts.some(a=>a.id===account.id&&a.status==='active')||!logins.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Device/account policy or login binding changed; no action performed');
+      if(option('--task-run-id')){
+        const run=await get('task-runs/'+encodeURIComponent(option('--task-run-id')));
+        if(run.status!=='running'||run.device_id!==device.id||run.account_id!==account.id)throw new Error('Task execution lease is no longer active');
+      }
+    };
     const settleCollection=async()=>{
       const end=Date.now()+15000;
       while(Date.now()<end){
@@ -226,14 +234,17 @@ export async function main(){
       }
       throw new Error('Collection overlay did not disappear; no next action performed');
     };
+    await checkReady();
     await appiumCall(base,path+'/execute/sync','POST',{script:'mobile: deepLink',args:[{url:note.url,package:'com.xingin.xhs'}]});
     await settleCollection();
     report.navigation.push({step:'open_shared_note',note_id:note.id});
-    if(!title){
+    if(!title||!author){
       let metadata,lastError;const end=Date.now()+20000;
       while(Date.now()<end){try{metadata=extractNoteMetadata(await source(),await activity());break;}catch(error){lastError=error.message;await sleep(750);}}
       if(!metadata)throw new Error(`Automatic metadata discovery failed: ${lastError}`);
-      ({title,author}=metadata);report.expected_title=title;report.expected_author=author;report.metadata=metadata;
+      if(author&&normalize(author)!==normalize(metadata.author))throw new Error('Discovered author does not match the requested author');
+      if(title&&!normalize(metadata.title).includes(normalize(title)))throw new Error('Discovered heading does not match the requested title');
+      title||=metadata.title;author||=metadata.author;report.expected_title=title;report.expected_author=author;report.metadata=metadata;
       report.navigation.push({step:'read_note_metadata',title,author});
     }
     await waitForNote();
@@ -274,8 +285,10 @@ export async function main(){
     for(const kind of actions){
       if(kind==='follow'){await settleCollection();await waitForNote();}
       report.current_action=kind;
+      await checkpoint();
       report.actions[kind]=await ensureAction(kind,inspect,button=>appiumCall(base,path+'/execute/sync','POST',{script:'mobile: clickGesture',args:[{x:button.x,y:button.y}]}),checkReady);
       report.after=report.actions[kind].after;
+      delete report.current_action;await checkpoint();
       await writeFile(resolve(output,`after-${kind}.png`),Buffer.from(await appiumCall(base,path+'/screenshot'),'base64'));
     }
     delete report.current_action;
@@ -304,7 +317,7 @@ export async function main(){
   }
   finally{
     if(sessionId)try{await appiumCall(base,'/session/'+sessionId,'DELETE');}catch{report.cleanup_error='Session cleanup failed';}
-    report.finished_at=new Date().toISOString();await writeFile(resolve(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({...report,artifacts:output},null,2));
+    report.finished_at=new Date().toISOString();await checkpoint();console.log(JSON.stringify({...report,artifacts:output},null,2));
   }
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.message);process.exitCode=1;});

@@ -21,28 +21,29 @@
     .integration h2{font-size:17px;margin:0 0 8px}.integration p,.integration li{font-size:13px;color:#5f6d76;line-height:1.65}.integration ul{padding-left:20px}.integration pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8f9;border:1px solid #e8ecee;border-radius:8px;padding:14px;font-size:12px;color:#35444d}.integration .bar{margin-bottom:8px}
     .connector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.connector-card{border:1px solid #e4e8eb;border-radius:9px;padding:14px;line-height:1.8}.connector-card strong{display:block}.device-summary{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;color:#58666f;font-size:13px}.detail-grid{display:grid;grid-template-columns:110px 1fr;gap:12px;font-size:14px;margin:0}.detail-grid dt{color:#71808a}.detail-grid dd{margin:0;overflow-wrap:anywhere}#deviceDialog{width:min(600px,calc(100vw - 28px))}button:disabled{opacity:.55;cursor:wait}.pill,td button{white-space:nowrap}.table-wrap{overflow:auto}body[data-view="devices"] table{min-width:1000px}
     th,td{padding-left:12px;padding-right:12px}th:last-child{width:180px}.row-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}.row-menu{position:fixed;inset:auto;margin:0;width:184px;max-height:calc(100vh - 24px);overflow-y:auto;padding:6px;border:1px solid #dfe5e9;border-radius:9px;background:white;box-shadow:0 10px 30px #17242c26}.row-menu:popover-open{display:grid;gap:3px}.row-menu::backdrop{background:transparent}.row-menu .secondary{border:0;width:100%;text-align:left;padding:10px 12px;background:transparent}.row-menu .secondary:hover,.row-menu .secondary:focus-visible{background:#f0f5f3}.more-button[aria-expanded="true"]{background:#edf4f1;border-color:#83b39e}td .sub{font-size:13px;line-height:1.5;margin-top:4px}
+    #taskDialog,#runDialog{width:min(600px,calc(100vw - 28px))}#taskDetailsDialog{width:min(1180px,calc(100vw - 28px))}dialog{max-height:calc(100dvh - 32px);overflow:auto}.action-choice{display:flex;flex-wrap:wrap;gap:20px}.action-choice label{display:flex;align-items:center;gap:6px}.action-choice input{width:16px;height:16px}.task-name{font-weight:600;overflow-wrap:anywhere}.task-caption{max-width:290px;white-space:normal;overflow-wrap:anywhere}.count-line{white-space:nowrap;font-variant-numeric:tabular-nums}.task-summary{display:flex;gap:16px;flex-wrap:wrap;margin:16px 0;color:#40534b;font-size:14px}.pill.succeeded{background:#e8f2ee;color:#24684a}.pill.failed,.pill.unknown{background:#fff1dd;color:#8a5c16}.pill.running{background:#e5effb;color:#245e96}body[data-view="tasks"] table,body[data-view="accounts"] table{min-width:1050px}.tabs{overflow-x:auto}.tabs button{white-space:nowrap}textarea{resize:vertical;min-height:76px}
     @media(max-width:720px){.shell{padding:22px 14px}.stats{grid-template-columns:1fr}.bar{align-items:flex-start;flex-direction:column}.controls{width:100%;flex-wrap:wrap}.controls input,.controls select{flex:1}.table-wrap{overflow:auto}table{min-width:680px}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
 <body>
   <main class="shell">
-    <header class="top"><div><h1>账号与设备管理</h1><div class="sub">登记工作账号、设备及人工确认的登录关系</div></div><span class="badge">基础管理</span></header>
+    <header class="top"><div><h1>账号与设备管理</h1><div class="sub">管理工作账号、设备、登录关系及笔记任务</div></div><span class="badge">任务与设备管理</span></header>
     <section class="stats" aria-label="统计概览">
       <div class="stat"><div class="stat-label">工作账号</div><div class="stat-value" id="accountCount">—</div></div>
       <div class="stat"><div class="stat-label">设备</div><div class="stat-value" id="deviceCount">—</div></div>
       <div class="stat"><div class="stat-label">当前登录记录</div><div class="stat-value" id="sessionCount">—</div></div>
     </section>
-    <nav class="tabs"><button class="tab active" data-view="accounts">工作账号</button><button class="tab" data-view="devices">设备</button><button class="tab" data-view="sessions">登录记录</button></nav>
+    <nav class="tabs"><button class="tab active" data-view="accounts">工作账号</button><button class="tab" data-view="devices">设备</button><button class="tab" data-view="sessions">登录记录</button><button class="tab" data-view="tasks">任务列表</button></nav>
     <section class="panel">
       <div class="bar"><h2 id="viewTitle">工作账号</h2><div class="controls"><input class="search" id="search" placeholder="搜索账号"><select id="connectionFilter" aria-label="连接状态" hidden><option value="">全部连接状态</option><option value="online">在线</option><option value="paused">已暂停</option><option value="pausing">暂停中</option><option value="resuming">恢复中</option><option value="attention">需检查</option><option value="offline">离线</option><option value="unpaired">未接入</option></select><button class="secondary" id="refreshButton">刷新</button><button class="primary" id="addButton">添加工作账号</button></div></div>
       <div id="deviceSummary" class="device-summary" hidden></div>
       <div class="table-wrap"><table><thead id="head"></thead><tbody id="rows"></tbody></table></div>
-      <div class="notice" id="viewNotice">登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。此模块不执行点赞或其他平台操作。</div>
+      <div class="notice" id="viewNotice">正在加载账号、设备和任务资料…</div>
     </section>
     <section class="panel" id="connectorPanel" hidden>
       <div class="bar"><div><h2>设备连接器</h2><div class="sub">连接器每 20 秒采集并自动保存，页面每 10 秒刷新。</div></div><span class="sub" id="syncTime" role="status"></span></div>
       <div id="connectorList" class="connector-grid"></div>
-      <div class="notice">测试结束可点击“暂停连接”：采集器确认断开后显示“已暂停”，停止采集和自动重连。点击“恢复连接”后重新发现并连接手机。请求通常在下一次采集周期执行；电脑连接器未运行时会等待执行。Appium 设备操作将在后续接入。</div>
+      <div class="notice">测试结束可点击“暂停连接”：采集器确认断开后显示“已暂停”，停止采集和自动重连。笔记任务需本机任务执行器与 Appium 同时运行，手机保持解锁亮屏。</div>
     </section>
   </main>
 
@@ -50,9 +51,20 @@
   <dialog id="deviceDialog"><div class="form"><h2>设备详情</h2><dl id="deviceDetails" class="detail-grid"></dl><div class="form-actions"><button type="button" class="secondary" id="closeDevice">关闭</button></div></div></dialog>
   <dialog id="controlDialog"><form class="form" id="controlForm"><h2>授权设备连接管理</h2><div class="fields"><label>设备控制码<input id="controlCode" type="password" required minlength="32" maxlength="256" autocomplete="off"></label></div><div class="notice">暂停和恢复会改变手机与电脑的连接。输入本机保存的设备控制码后，本标签页可继续操作。</div><div class="danger" id="controlError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" id="cancelControl">取消</button><button class="primary" id="confirmControl">授权并执行</button></div></form></dialog>
   <dialog id="installDialog"><form class="form" id="installForm"><h2 id="installTitle">安装 APK</h2><div class="fields"><label>本机安装包<select id="installPackage" required></select></label><label>设备控制码<input id="installCode" type="password" autocomplete="off" maxlength="256" placeholder="本标签页已授权时可留空"></label></div><div class="notice">将 APK 放入连接手机电脑的 D:\Codex 或 D:\Codex\account-management\work\apks 目录，安装器运行后会自动出现在列表。安装会保留已有应用数据；手机可能要求确认安装。</div><div id="installError" class="danger" role="alert"></div><div class="form-actions"><button type="button" class="secondary" id="closeInstall">关闭</button><button class="primary" id="submitInstall">安装到此设备</button></div><h3>最近安装记录</h3><div id="installHistory" class="notice"></div></form></dialog>
+  <dialog id="taskDialog"><form class="form" id="taskForm"><h2 id="taskFormTitle">新建任务</h2><div class="fields">
+    <label>任务名称<input name="name" maxlength="120" required placeholder="如：旅行视频互动测试"></label>
+    <label>笔记分享链接或分享文案<textarea name="note_url" required maxlength="4096" placeholder="粘贴手机复制的完整分享链接或分享文案"></textarea></label>
+    <label>作者昵称（选填，填写后核对）<input name="expected_author" maxlength="120" placeholder="留空则自动读取"></label>
+    <label>标题 / 视频正文（选填，填写后核对）<input name="expected_title" maxlength="500" placeholder="留空则自动读取"></label>
+    <div><div class="sub" style="margin-bottom:8px">执行动作（至少一项）</div><div class="action-choice"><label><input type="checkbox" name="actions" value="like" checked>点赞</label><label><input type="checkbox" name="actions" value="collect" checked>收藏</label><label><input type="checkbox" name="actions" value="follow" checked>关注作者</label></div></div>
+    <label>备注<textarea name="notes" maxlength="2000"></textarea></label>
+    <label>设备控制码<input name="control_code" type="password" autocomplete="off" maxlength="256" placeholder="本标签页已授权时可留空"></label>
+  </div><div class="notice">保存仅创建任务。点击列表“执行”时再选择设备与工作账号。编辑不改变已有执行明细中的参数。</div><div class="danger" id="taskFormError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="taskDialog">取消</button><button class="primary" id="saveTask">保存任务</button></div></form></dialog>
+  <dialog id="runDialog"><form class="form" id="runForm"><h2 id="runTitle">执行任务</h2><div class="fields"><label>指定设备<select id="runDevice" required></select></label><label>工作账号<select id="runAccount" required></select></label><label>设备控制码<input id="runCode" type="password" autocomplete="off" maxlength="256" placeholder="本标签页已授权时可留空"></label></div><div class="notice" id="runGuide"></div><div class="danger" id="runError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="runDialog">取消</button><button class="primary" id="submitRun">加入执行队列</button></div></form></dialog>
+  <dialog id="taskDetailsDialog"><div class="form"><div class="bar"><h2 id="taskDetailsTitle">执行明细</h2><button type="button" class="secondary" id="refreshTaskDetails">刷新明细</button></div><div id="taskMetadata" class="notice"></div><div id="taskTotals" class="task-summary"></div><div class="sub" style="margin-bottom:12px">最近 200 条执行明细；统计包含全部明细。已完成 = 操作前已处于目标状态，本次跳过，不增加动作数。</div><div class="table-wrap"><table><thead><tr><th>时间 / 任务</th><th>设备 / 工作账号</th><th>状态</th><th>点赞</th><th>收藏</th><th>关注</th><th>结果说明</th></tr></thead><tbody id="taskRunRows"></tbody></table></div><div class="danger" id="taskDetailsError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="taskDetailsDialog">关闭</button></div></div></dialog>
   <script type="module">
     const labels = { active:"正常", paused:"已暂停", pausing:"暂停中", resuming:"恢复中", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束", unpaired:"未接入", online:"在线", offline:"离线", attention:"需检查" };
-    const state = { view:['accounts','devices','sessions'].includes(location.hash.slice(1))?location.hash.slice(1):'accounts', accounts:[], devices:[], sessions:[], connectors:[], configured:false, loadError:false, loadedAt:null };
+    const state = { view:['accounts','devices','sessions','tasks'].includes(location.hash.slice(1))?location.hash.slice(1):'accounts', accounts:[], devices:[], sessions:[], tasks:[], connectors:[], configured:false, loadError:false, loadedAt:null };
     const $ = (s) => document.querySelector(s);
     const safe = (s="") => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
     async function api(path, options={}) {
@@ -66,8 +78,8 @@
       if(refreshing||document.querySelector('.row-menu:popover-open'))return;
       refreshing=true; $("#refreshButton").disabled=true;
       try {
-        const [accounts,devices,sessions,connection] = await Promise.all([api("accounts"),api("devices"),api("sessions"),api("connectors")]);
-        Object.assign(state,{accounts,devices,sessions,connectors:connection.connectors,configured:connection.configured,loadedAt:new Date()});
+        const [accounts,devices,sessions,connection,tasks] = await Promise.all([api("accounts"),api("devices"),api("sessions"),api("connectors"),api('tasks')]);
+        Object.assign(state,{accounts,devices,sessions,tasks,connectors:connection.connectors,configured:connection.configured,loadedAt:new Date()});
         state.loadError=false;
         render();
       } catch (e) {
@@ -116,12 +128,13 @@
       $("#sessionCount").textContent=state.loadError?"—":state.sessions.filter(s=>s.status==="active").length;
       const q=$("#search").value.trim().toLowerCase();
       const configs={
-        accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td>${rowActions(`<button class="secondary" data-edit-account="${safe(x.id)}">编辑名称</button>`,`<button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${safe(x.id)}" data-kind="accounts">${x.status==='disabled'?'启用账号':'停用账号'}</button>`,`account-${x.id}`,x.display_name||'账号')}</td></tr>`},
+        accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","执行次数","本项目执行数","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${Number(x.execution_count)||0}<div class="sub">完成 ${Number(x.succeeded_count)||0} 次</div></td><td>${actionCounts(x)}</td><td>${safe(x.notes)||"—"}</td><td>${rowActions(`<button class="secondary" data-account-runs="${safe(x.id)}">执行明细</button>`,`<button class="secondary" data-edit-account="${safe(x.id)}">编辑名称</button><button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${safe(x.id)}" data-kind="accounts">${x.status==='disabled'?'启用账号':'停用账号'}</button>`,`account-${x.id}`,x.display_name||'账号')}</td></tr>`},
+        tasks:{title:'任务列表',placeholder:'搜索任务、作者或笔记信息',add:'新建任务',cols:['任务 / 笔记','执行动作','执行次数','本项目执行数','最近状态','创建时间','操作'],data:state.tasks.filter(t=>`${t.name} ${t.expected_title} ${t.expected_author} ${t.note_url} ${t.notes}`.toLowerCase().includes(q)),row:t=>`<tr><td class="task-caption"><div class="task-name">${safe(t.name)}</div><div class="sub">${safe(t.expected_author||'自动读取作者')}${t.expected_title?' · '+safe(t.expected_title):''}</div></td><td>${t.actions.map(a=>actionLabels[a]).join('、')}</td><td>${Number(t.execution_count)||0}<div class="sub">完成 ${Number(t.succeeded_count)||0} 次</div></td><td>${actionCounts(t)}</td><td>${t.latest_status?runPill(t.latest_status):'未执行'}</td><td>${date(t.created_at)}</td><td>${rowActions(`<button class="secondary" data-run-task="${safe(t.id)}">执行</button>`,`<button class="secondary" data-task-details="${safe(t.id)}">任务详情 / 明细</button><button class="secondary" data-edit-task="${safe(t.id)}">编辑任务</button>`,`task-${t.id}`,t.name)}</td></tr>`},
         devices:{title:"设备",placeholder:"搜索名称、型号或连接地址",add:"手动登记",cols:["设备名称","厂商 / 型号","系统 / 分辨率","连接状态","最后在线","电量（最近采集）","设备状态","操作"],data:state.devices.filter(x=>`${x.name} ${x.manufacturer} ${x.model} ${x.os} ${x.os_version} ${x.agent_name} ${x.adb_address||''}`.toLowerCase().includes(q)&&(!$("#connectionFilter").value||x.connection_status===$("#connectionFilter").value)),row:deviceRow},
         sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"指定账号登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?rowActions(`<button class="secondary" data-status="ended" data-id="${safe(x.id)}" data-kind="sessions">结束记录</button>`,`<button class="secondary" data-status="verification_needed" data-id="${safe(x.id)}" data-kind="sessions">标记需验证</button>`,`session-${x.id}`,'登录记录'):"—"}</td></tr>`}
       };
       const c=configs[state.view]; $("#viewTitle").textContent=c.title; $("#search").placeholder=c.placeholder; $("#addButton").textContent=c.add;
-      $("#viewNotice").textContent=state.view==="accounts"?"手机号（国家/地区号 + 手机号）作为工作账号主体。当前不做号码格式正则校验；请勿在此录入密码、Cookie 或验证码。":state.view==="devices"?"连接手机并运行本机连接器后，设备资料自动入库。名称、备注和可用 / 维护 / 停用状态可手动编辑，自动同步会保留这些设置。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
+      $("#viewNotice").textContent=state.view==="tasks"?'每个任务可多次指定设备和工作账号执行。只累计本项目确认成功的实际动作，已完成而跳过的动作不计数。每次执行直接通过分享链接定位；手机需解锁亮屏。':state.view==="accounts"?"执行次数累计实际启动的任务明细；点赞、收藏、关注数累计任务记录中确认成功的操作，不是笔记真实总数。历史脚本测试未自动补记。":state.view==="devices"?"连接手机并运行本机连接器后，设备资料自动入库。名称、备注和可用 / 维护 / 停用状态可手动编辑，自动同步会保留这些设置。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
       const isDevices=state.view==="devices";
       $("#connectionFilter").hidden=!isDevices; $("#deviceSummary").hidden=!isDevices; $("#connectorPanel").hidden=!isDevices;
       $("#deviceSummary").textContent=state.loadError?'设备状态暂不可用':`共 ${state.devices.length} 台 · 在线 ${state.devices.filter(d=>d.connection_status==='online').length} · 已暂停 ${state.devices.filter(d=>d.connection_status==='paused').length} · 处理中 ${state.devices.filter(d=>['pausing','resuming'].includes(d.connection_status)).length} · 需检查 ${state.devices.filter(d=>d.connection_status==='attention').length} · 离线 ${state.devices.filter(d=>d.connection_status==='offline').length}`;
@@ -161,7 +174,7 @@
       const select=$('#fields [name="device_id"]');select.value=button.dataset.loginDevice;updateLoginGuide();
     });
     document.querySelectorAll(".tab").forEach(b=>b.addEventListener("click",()=>{state.view=b.dataset.view;history.replaceState(null,'',`#${state.view}`);render();}));
-    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",()=>{editingAccountId=null;editingDeviceId=null;openForm();}); $("#cancel").addEventListener("click",()=>{$("#dialog").close();});
+    $("#search").addEventListener("input",render); $("#addButton").addEventListener("click",()=>{if(state.view==='tasks'){openTaskForm();return;}editingAccountId=null;editingDeviceId=null;openForm();}); $("#cancel").addEventListener("click",()=>{$("#dialog").close();});
     $("#connectionFilter").addEventListener('change',render); $("#refreshButton").addEventListener('click',refresh); $("#closeDevice").addEventListener('click',()=>$("#deviceDialog").close());
     $("#rows").addEventListener("click",e=>{if(e.target.closest("#retryLoad"))refresh();});
     let pendingControl=null,controlCode='';
@@ -250,8 +263,89 @@
       }catch(error){if(error.status===401)saveControlCode('');if(error.status&&error.status!==401)installationRequest=null;$('#installError').textContent=error.message;}
       finally{installationBusy=false;await refreshInstallations();}
     });
+    const actionLabels={like:'点赞',collect:'收藏',follow:'关注'};
+    const runLabels={queued:'等待执行',running:'执行中',succeeded:'执行完成',failed:'执行失败',unknown:'结果待核实',cancelled:'已取消'};
+    const outcomeLabels={pending:'待执行',performed:'成功 +1',skipped:'已完成 · 跳过',unknown:'待核实',not_run:'未执行'};
+    const runPill=status=>`<span class="pill ${safe(status)}">${safe(runLabels[status]||status)}</span>`;
+    function actionCounts(value){return `<div class="count-line">赞 ${Number(value.like_count)||0} · 藏 ${Number(value.collect_count)||0} · 关 ${Number(value.follow_count)||0}</div><div class="sub">合计 ${(Number(value.like_count)||0)+(Number(value.collect_count)||0)+(Number(value.follow_count)||0)}</div>`;}
+    document.querySelectorAll('[data-close-dialog]').forEach(button=>button.addEventListener('click',()=>document.getElementById(button.dataset.closeDialog).close()));
+    let editingTask=null,executionTask=null,executionRequest=null,detailsContext=null,detailsRefreshing=false;
+    function openTaskForm(task=null){
+      editingTask=task;const form=$('#taskForm');form.reset();
+      $('#taskFormTitle').textContent=task?'编辑任务':'新建任务';$('#taskFormError').textContent='';
+      for(const name of ['name','note_url','expected_author','expected_title','notes'])form.elements[name].value=task?.[name]||'';
+      form.querySelectorAll('[name="actions"]').forEach(input=>input.checked=task?task.actions.includes(input.value):true);
+      $('#taskDialog').showModal();
+    }
+    $('#taskDialog').addEventListener('close',()=>{$('#taskForm [name="control_code"]').value='';});
+    $('#taskForm').addEventListener('submit',async event=>{
+      event.preventDefault();const form=event.currentTarget,data=Object.fromEntries(new FormData(form));data.actions=new FormData(form).getAll('actions');
+      const code=data.control_code.trim()||controlCode;delete data.control_code;
+      if(!data.actions.length){$('#taskFormError').textContent='请至少选择一个执行动作。';return;}
+      if(!code){$('#taskFormError').textContent='请输入设备控制码，本标签页已授权时无需重复输入。';return;}
+      $('#saveTask').disabled=true;$('#taskFormError').textContent='';
+      try{await api(editingTask?'tasks/'+editingTask.id:'tasks',{method:editingTask?'PATCH':'POST',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(data)});saveControlCode(code);$('#taskDialog').close();await refresh();}
+      catch(error){if(error.status===401)saveControlCode('');$('#taskFormError').textContent=error.message;}
+      finally{$('#saveTask').disabled=false;}
+    });
+    function updateExecutionAccount(){
+      const previous=$('#runAccount').value,deviceId=$('#runDevice').value;
+      const accounts=state.accounts.filter(a=>a.status==='active'&&state.sessions.some(s=>s.account_id===a.id&&s.device_id===deviceId&&s.status==='active'));
+      $('#runAccount').innerHTML=accounts.length?accounts.map(a=>`<option value="${safe(a.id)}">${safe(a.display_name||a.phone_number)} · ${safe(a.phone_country_code)} ${safe(a.phone_number)}</option>`).join(''):'<option value="">此设备尚无已确认登录的工作账号</option>';
+      if(accounts.some(a=>a.id===previous))$('#runAccount').value=previous;
+      const device=state.devices.find(d=>d.id===deviceId),worker=state.connectors.find(c=>c.id===device?.connector_id);
+      $('#runGuide').textContent=!device?'当前没有在线、可用且未暂停的设备。':!worker?.task_worker_online?'本机任务执行器未在线，暂不可执行。':!accounts.length?'请先在此手机登录目标账号，并在后台确认账号登录。':`直接打开分享链接并核对目标，执行${executionTask.actions.map(a=>actionLabels[a]).join('、')}。请先解锁手机并保持亮屏；不会自动切换账号。已有目标状态会跳过，不重复计数。`;
+      $('#submitRun').disabled=!device||!accounts.length||!worker?.task_worker_online;
+      executionRequest=null;
+    }
+    $('#runDevice').addEventListener('change',updateExecutionAccount);$('#runAccount').addEventListener('change',()=>{executionRequest=null;});
+    function openExecution(task){
+      executionTask=task;executionRequest=null;$('#runTitle').textContent='执行任务 · '+task.name;$('#runError').textContent='';$('#runCode').value='';
+      const available=state.devices.filter(d=>d.status==='available'&&d.connection_mode==='active'&&d.connection_status==='online');
+      $('#runDevice').innerHTML=available.length?available.map(d=>`<option value="${safe(d.id)}">${safe(d.name)}</option>`).join(''):'<option value="">无可用设备</option>';
+      updateExecutionAccount();$('#runDialog').showModal();
+    }
+    $('#runDialog').addEventListener('close',()=>{$('#runCode').value='';});
+    $('#runForm').addEventListener('submit',async event=>{
+      event.preventDefault();if(!executionTask)return;
+      const code=$('#runCode').value.trim()||controlCode;if(!code){$('#runError').textContent='请输入设备控制码。';return;}
+      executionRequest||={request_id:crypto.randomUUID(),task_id:executionTask.id,device_id:$('#runDevice').value,account_id:$('#runAccount').value};
+      $('#submitRun').disabled=true;$('#runError').textContent='';
+      try{await api('task-runs',{method:'POST',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(executionRequest)});saveControlCode(code);const taskId=executionTask.id;$('#runDialog').close();await refresh();await openExecutionDetails({taskId});}
+      catch(error){if(error.status===401)saveControlCode('');$('#runError').textContent=error.message;$('#submitRun').disabled=false;}
+    });
+    async function openExecutionDetails(context){detailsContext=context;$('#taskDetailsError').textContent='';$('#taskRunRows').innerHTML='<tr><td colspan="7" class="empty">加载中…</td></tr>';$('#taskDetailsDialog').showModal();await refreshExecutionDetails();}
+    async function refreshExecutionDetails(){
+      if(!detailsContext||!$('#taskDetailsDialog').open||detailsRefreshing)return;
+      detailsRefreshing=true;$('#refreshTaskDetails').disabled=true;const context=detailsContext;
+      try{
+        const query=context.taskId?'task_id='+encodeURIComponent(context.taskId):'account_id='+encodeURIComponent(context.accountId);
+        const [runs,summary]=await Promise.all([api('task-runs?'+query),context.taskId?api('tasks/'+context.taskId):api('accounts')]);
+        if(detailsContext!==context)return;
+        const value=context.taskId?summary:summary.find(a=>a.id===context.accountId);
+        $('#taskDetailsTitle').textContent=context.taskId?'任务详情 · '+value.name:'账号执行明细 · '+(value.display_name||value.phone_number);
+        $('#taskMetadata').innerHTML=context.taskId?`<div>链接：${safe(value.note_url)}</div><div>作者：${safe(value.expected_author||'自动读取')} · 标题 / 正文：${safe(value.expected_title||'自动读取')}</div><div>动作：${value.actions.map(a=>actionLabels[a]).join('、')}</div>${value.notes?`<div>备注：${safe(value.notes)}</div>`:''}`:'本项目执行统计；账号身份以人工确认的登录绑定为准。';
+        $('#taskTotals').innerHTML=`<span>执行 ${Number(value.execution_count)||0} 次 · 完成 ${Number(value.succeeded_count)||0} 次</span><span>${actionCounts(value)}</span>`;
+        $('#taskRunRows').innerHTML=runs.length?runs.map(r=>`<tr><td>${date(r.created_at)}<div class="sub">${safe(r.snapshot.name)}</div><div class="sub">启动：${date(r.started_at)}</div></td><td>${safe(r.device_name)}<div class="sub">${safe(r.account_name||r.phone_number)}</div></td><td>${runPill(r.status)}${r.status==='queued'?`<div><button class="secondary" data-cancel-run="${safe(r.id)}">取消排队</button></div>`:''}</td>${['like','collect','follow'].map(a=>`<td>${safe(outcomeLabels[r.action_results.find(x=>x.action===a)?.outcome]||'—')}</td>`).join('')}<td class="task-caption">${safe(r.message||'等待本机执行器领取')}<div class="sub">${safe(r.resolved_author)} ${safe(r.resolved_title)}</div><details><summary>本次参数</summary><div class="sub">${safe(r.snapshot.note_url)}<br>作者：${safe(r.snapshot.expected_author||'自动读取')}<br>标题：${safe(r.snapshot.expected_title||'自动读取')}<br>执行编号：${safe(r.id)}</div></details></td></tr>`).join(''):'<tr><td colspan="7" class="empty">暂无执行明细</td></tr>';
+        $('#taskDetailsError').textContent='';
+      }catch(error){$('#taskDetailsError').textContent=error.message;}
+      finally{detailsRefreshing=false;$('#refreshTaskDetails').disabled=false;}
+    }
+    $('#refreshTaskDetails').addEventListener('click',refreshExecutionDetails);
+    $('#taskDetailsDialog').addEventListener('close',()=>{detailsContext=null;});
+    $('#taskRunRows').addEventListener('click',async event=>{
+      const button=event.target.closest('[data-cancel-run]');if(!button)return;button.disabled=true;
+      try{await api('task-runs/'+button.dataset.cancelRun,{method:'PATCH',headers:{'content-type':'application/json','x-device-control-token':controlCode},body:JSON.stringify({action:'cancel'})});await refreshExecutionDetails();await refresh();}
+      catch(error){$('#taskDetailsError').textContent=error.message;button.disabled=false;}
+    });
+    $('#rows').addEventListener('click',event=>{
+      const button=event.target.closest('[data-run-task],[data-edit-task],[data-task-details],[data-account-runs]');if(!button)return;
+      if(button.dataset.accountRuns){openExecutionDetails({accountId:button.dataset.accountRuns});return;}
+      const task=state.tasks.find(t=>t.id===(button.dataset.runTask||button.dataset.editTask||button.dataset.taskDetails));if(!task)return;
+      if(button.dataset.runTask)openExecution(task);else if(button.dataset.editTask)openTaskForm(task);else openExecutionDetails({taskId:task.id});
+    });
     refresh();
-    setInterval(()=>{if(!document.hidden){refresh();refreshInstallations();}},10000);
+    setInterval(()=>{if(!document.hidden){refresh();refreshInstallations();refreshExecutionDetails();}},10000);
   </script>
 </body>
 </html>

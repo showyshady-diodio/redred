@@ -1,4 +1,5 @@
 import { badRequest, body, id, json, routeId } from "../_shared.js";
+import { statisticsSQL } from '../_tasks.js';
 
 const allowed = new Set(["active", "paused", "verification_needed", "disabled"]);
 
@@ -8,7 +9,9 @@ export async function onRequestGet({ request, env, params }) {
     const row = await env.DB.prepare("SELECT * FROM work_accounts WHERE id = ?").bind(accountId).first();
     return row ? json(row) : json({ error: "Account not found" }, 404);
   }
-  const { results } = await env.DB.prepare("SELECT * FROM work_accounts ORDER BY updated_at DESC").all();
+  const { results } = await env.DB.prepare(`SELECT a.*,COALESCE(s.execution_count,0) execution_count,COALESCE(s.succeeded_count,0) succeeded_count,
+    COALESCE(s.like_count,0) like_count,COALESCE(s.collect_count,0) collect_count,COALESCE(s.follow_count,0) follow_count
+    FROM work_accounts a LEFT JOIN (${statisticsSQL('account_id')}) s ON s.owner_id=a.id ORDER BY a.updated_at DESC`).all();
   return json(results);
 }
 

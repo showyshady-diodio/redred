@@ -29,7 +29,7 @@ export async function onRequestPost({env,request}) {
       .bind(data.request_id,apk.id,apk.filename,apk.sha256,apk.size_bytes,now,device.id).run();
     if(!result.meta.changes)return json({error:'设备状态已改变，请刷新后重试。'},409);
   } catch(error) {
-    if(/UNIQUE|constraint/i.test(error.message))return json({error:'该设备已有安装任务，请等待完成后再操作。'},409);
+    if(/UNIQUE|constraint|device has/i.test(error.message))return json({error:'该设备已有安装或笔记执行任务，请等待完成后再操作。'},409);
     throw error;
   }
   return json({id:data.request_id,status:'queued'},201);

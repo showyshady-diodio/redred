@@ -135,6 +135,13 @@ In the Pages project settings, bind the D1 database as `DB`. Restrict the app wi
 
 ## API
 
+Task management, execution statistics, worker setup, and release instructions are documented in [TASKS.md](TASKS.md).
+
+- `GET/POST /api/tasks`, `GET/PATCH /api/tasks/:id`
+- `GET/POST /api/task-runs`, `GET/PATCH /api/task-runs/:id` (queued cancellation)
+- `POST /api/connectors/tasks` (authenticated worker heartbeat, claim, progress and result)
+- Account and task list responses include project execution and action counts.
+
 - `GET/POST /api/accounts`
 - `GET/PATCH /api/accounts/:id` (status change)
 - `GET/POST /api/devices`
