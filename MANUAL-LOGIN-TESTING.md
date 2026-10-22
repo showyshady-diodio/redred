@@ -30,3 +30,11 @@ The script resolves supported share links, verifies the physical device by its e
 Keep the phone unlocked with the screen on during testing. The script refuses an asleep/dozing device before creating a session. Add `--device-id` and `--account-id` when there is more than one enrolled device/account. Add `--like` only to run the ensure-liked operation on the explicitly selected note. A clear already-liked state is skipped; an unliked state is clicked once and checked again. Ambiguous identity, ambiguous controls, disconnects and unconfirmed results stop without automatic retry. No arbitrary right-hand icon fallback is used.
 
 The current selector recognizes the bottom Android button's explicit Like/Unlike description and selected state. App updates may change these semantics; revalidate on the target app version. There is no bulk engagement task scheduler in this version.
+
+## Current physical-device validation
+
+On 2026-10-22, Appium 3.8.0 / UiAutomator2 8.7.0 created a real session on the enrolled Xiaomi Android 14 phone. The operator confirmed the sole work-account login, and the existing backend stored that manually confirmed account/device relationship.
+
+The share link supplied by the operator resolved to note `6ab8fa30000000001a025203`. Read-only testing verified author `Zyq`, title `还我行李箱`, and the bottom button description `点赞 2` (not liked). The note could be opened through its resolved canonical URL; the short-link hostname itself was not handled by this app version.
+
+The single like attempt was rejected. Device logs showed `InputManager: Permission Denial ... requires android.permission.INJECT_EVENTS`. The operator confirmed that enabling Xiaomi's USB debugging (Security settings) also requires a SIM card on this phone. Automated click success and the already-liked skip path have not been validated on this physical phone. No successful like is claimed. Enable that permission on the phone, then rerun the targeted test; do not treat a healthy Appium server or readable page as proof that clicking works.

@@ -118,7 +118,20 @@ export async function main(){
       await writeFile(resolve(output,'after.png'),Buffer.from(await appiumCall(base,path+'/screenshot'),'base64'));
     }
     report.status='passed';
-  }catch(error){report.status='failed';report.error=error.message;throw error;}
+  }catch(error){
+    report.status='failed';report.error=error.message;
+    if(/GestureController|performGesture/.test(error.message)){
+      try{
+        const diagnostic=await adb('-s',serial,'logcat','-d','-t','300','InputManager:W','*:S');
+        if(diagnostic.includes('android.permission.INJECT_EVENTS')){
+          report.status='blocked';report.blocker='input_permission';
+          report.error='手机拒绝模拟点击：需要开启开发者选项中的 USB 调试（安全设置）。如果系统要求 SIM 卡，需要先在手机完成该授权。';
+          error.message=report.error;
+        }
+      }catch{ /* Preserve the original command error if device diagnostics are unavailable. */ }
+    }
+    throw error;
+  }
   finally{
     if(sessionId)try{await appiumCall(base,'/session/'+sessionId,'DELETE');}catch{report.cleanup_error='Session cleanup failed';}
     report.finished_at=new Date().toISOString();await writeFile(resolve(output,'report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({...report,artifacts:output},null,2));
