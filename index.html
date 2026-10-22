@@ -8,7 +8,7 @@
   <style>
     :root{font-family:Inter,"Microsoft YaHei",sans-serif;color:#1b2630;background:#f4f6f8;font-synthesis:none}
     *{box-sizing:border-box} [hidden]{display:none!important} body{margin:0}button,input,select,textarea{font:inherit}button{cursor:pointer}
-    .shell{max-width:1180px;margin:auto;padding:32px 24px 56px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px}
+    .shell{max-width:1440px;margin:auto;padding:32px 28px 56px}.top{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:24px}
     h1{font-size:26px;margin:0 0 6px}.sub{color:#6c7781;font-size:14px}.badge{font-size:12px;padding:6px 10px;border-radius:20px;background:#e8f2ee;color:#24684a}
     .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:22px}.stat,.panel{background:white;border:1px solid #e4e8eb;border-radius:12px}.stat{padding:16px 18px}.stat-label{color:#71808a;font-size:13px}.stat-value{font-size:24px;font-weight:650;margin-top:8px}
     .tabs{display:flex;gap:8px;border-bottom:1px solid #dfe4e8;margin-bottom:18px}.tab{border:0;background:transparent;padding:12px 16px;color:#68747d;border-bottom:2px solid transparent}.tab.active{color:#176b50;border-color:#176b50;font-weight:600}
@@ -20,6 +20,7 @@
     dialog{border:0;border-radius:12px;padding:0;width:min(460px,calc(100vw - 28px));box-shadow:0 20px 70px #17242c33}dialog::backdrop{background:#1c2c3580}.form{padding:22px}.form h2{font-size:18px;margin:0 0 18px}.fields{display:grid;gap:13px}.fields label{display:grid;gap:6px;font-size:13px;color:#58666f}.form-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.notice{color:#65727b;background:#f6f8f9;padding:12px 14px;border-radius:8px;font-size:13px;line-height:1.5;margin-top:12px}
     .integration h2{font-size:17px;margin:0 0 8px}.integration p,.integration li{font-size:13px;color:#5f6d76;line-height:1.65}.integration ul{padding-left:20px}.integration pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f8f9;border:1px solid #e8ecee;border-radius:8px;padding:14px;font-size:12px;color:#35444d}.integration .bar{margin-bottom:8px}
     .connector-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}.connector-card{border:1px solid #e4e8eb;border-radius:9px;padding:14px;line-height:1.8}.connector-card strong{display:block}.device-summary{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:14px;color:#58666f;font-size:13px}.detail-grid{display:grid;grid-template-columns:110px 1fr;gap:12px;font-size:14px;margin:0}.detail-grid dt{color:#71808a}.detail-grid dd{margin:0;overflow-wrap:anywhere}#deviceDialog{width:min(600px,calc(100vw - 28px))}button:disabled{opacity:.55;cursor:wait}.pill,td button{white-space:nowrap}.table-wrap{overflow:auto}body[data-view="devices"] table{min-width:1000px}
+    th,td{padding-left:12px;padding-right:12px}th:last-child{width:180px}.row-actions{display:flex;align-items:center;gap:8px;white-space:nowrap}.row-menu{position:fixed;inset:auto;margin:0;width:184px;max-height:calc(100vh - 24px);overflow-y:auto;padding:6px;border:1px solid #dfe5e9;border-radius:9px;background:white;box-shadow:0 10px 30px #17242c26}.row-menu:popover-open{display:grid;gap:3px}.row-menu::backdrop{background:transparent}.row-menu .secondary{border:0;width:100%;text-align:left;padding:10px 12px;background:transparent}.row-menu .secondary:hover,.row-menu .secondary:focus-visible{background:#f0f5f3}.more-button[aria-expanded="true"]{background:#edf4f1;border-color:#83b39e}td .sub{font-size:13px;line-height:1.5;margin-top:4px}
     @media(max-width:720px){.shell{padding:22px 14px}.stats{grid-template-columns:1fr}.bar{align-items:flex-start;flex-direction:column}.controls{width:100%;flex-wrap:wrap}.controls input,.controls select{flex:1}.table-wrap{overflow:auto}table{min-width:680px}.top{align-items:flex-start;flex-direction:column}}
   </style>
 </head>
@@ -62,7 +63,7 @@
     }
     let refreshing=false;
     async function refresh() {
-      if(refreshing)return;
+      if(refreshing||document.querySelector('.row-menu:popover-open'))return;
       refreshing=true; $("#refreshButton").disabled=true;
       try {
         const [accounts,devices,sessions,connection] = await Promise.all([api("accounts"),api("devices"),api("sessions"),api("connectors")]);
@@ -79,6 +80,22 @@
     }
     const date = value => { if(!value)return "—"; const normalized=value.replace(" ","T"); const parsed=new Date(/[zZ]$|[+-]\d{2}:\d{2}$/.test(normalized)?normalized:normalized+"Z"); return Number.isNaN(parsed.getTime())?"—":parsed.toLocaleString("zh-CN",{hour12:false}); };
     function pill(status) { return `<span class="pill ${safe(status)}">${safe(labels[status] || status)}</span>`; }
+    function rowActions(primary,secondary,key,label){
+      const menuId=`row-menu-${key}`;
+      return `<div class="row-actions">${primary}<button type="button" class="secondary more-button" popovertarget="${safe(menuId)}" aria-controls="${safe(menuId)}" aria-expanded="false" aria-label="${safe(label)}的更多操作">更多 ▾</button><div class="row-menu" id="${safe(menuId)}" popover="auto">${secondary}</div></div>`;
+    }
+    document.addEventListener('beforetoggle',e=>{
+      const menu=e.target;if(!menu.matches?.('.row-menu'))return;
+      const trigger=document.querySelector(`[popovertarget="${CSS.escape(menu.id)}"]`);if(!trigger)return;
+      trigger.setAttribute('aria-expanded',String(e.newState==='open'));
+      if(e.newState!=='open')return;
+      const rect=trigger.getBoundingClientRect(),width=184,height=Math.min(menu.children.length*44+12,innerHeight-24);
+      menu.style.left=`${Math.max(12,Math.min(rect.right-width,innerWidth-width-12))}px`;
+      menu.style.top=`${rect.bottom+height+6<=innerHeight-12?rect.bottom+6:Math.max(12,rect.top-height-6)}px`;
+    },true);
+    document.addEventListener('click',e=>{const menu=e.target.closest('.row-menu');if(menu&&e.target.closest('button')&&menu.matches(':popover-open'))menu.hidePopover();});
+    addEventListener('resize',()=>document.querySelectorAll('.row-menu:popover-open').forEach(menu=>menu.hidePopover()));
+    document.addEventListener('scroll',e=>{if(!e.target.closest?.('.row-menu'))document.querySelectorAll('.row-menu:popover-open').forEach(menu=>menu.hidePopover());},true);
     function connectionHint(connector) {
       if(connector.status==='offline')return '电脑连接器已停止上报，请检查电脑和采集器进程；暂停或恢复请求会等待连接器上线。';
       const devices=state.devices.filter(d=>d.connector_id===connector.id);
@@ -90,7 +107,7 @@
       const install=x.connector_id?` <button class="secondary" data-install-device="${safe(x.id)}">安装 APK</button>`:'';
       controls+=install;
       const detail=x.control_error?`<div class="sub danger">${safe(x.control_error)}</div>`:['pausing','resuming'].includes(x.connection_status)?'<div class="sub">等待连接器执行</div>':'';
-      return `<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||'—'}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||'—'}<div class="sub">${safe(x.screen_resolution)||'—'}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div>${detail}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td><button class="secondary" data-device-detail="${safe(x.id)}">详情</button> <button class="secondary" data-edit-device="${safe(x.id)}">编辑</button>${controls}</td></tr>`;
+      return `<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||'—'}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||'—'}<div class="sub">${safe(x.screen_resolution)||'—'}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div>${detail}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td>${rowActions(`<button class="secondary" data-device-detail="${safe(x.id)}">详情</button>`,`<button class="secondary" data-edit-device="${safe(x.id)}">编辑设备</button>${controls}`,`device-${x.id}`,x.name)}</td></tr>`;
     }
     function render() {
       document.body.dataset.view=state.view;
@@ -99,9 +116,9 @@
       $("#sessionCount").textContent=state.loadError?"—":state.sessions.filter(s=>s.status==="active").length;
       const q=$("#search").value.trim().toLowerCase();
       const configs={
-        accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td><button class="secondary" data-edit-account="${x.id}">编辑名称</button> <button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${x.id}" data-kind="accounts">${x.status==='disabled'?'启用':'停用'}</button></td></tr>`},
+        accounts:{title:"工作账号",placeholder:"搜索国家号、手机号或名称",add:"添加工作账号",cols:["国家 / 地区号","手机号","显示名称","状态","备注","操作"],data:state.accounts.filter(x=>`${x.phone_country_code||''} ${x.phone_number||''} ${x.handle||''} ${x.display_name} ${x.notes}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.phone_country_code)||"—"}</td><td>${safe(x.phone_number)||safe(x.handle)||"—"}</td><td>${safe(x.display_name)||"—"}</td><td>${pill(x.status)}</td><td>${safe(x.notes)||"—"}</td><td>${rowActions(`<button class="secondary" data-edit-account="${safe(x.id)}">编辑名称</button>`,`<button class="secondary" data-status="${x.status==='disabled'?'active':'disabled'}" data-id="${safe(x.id)}" data-kind="accounts">${x.status==='disabled'?'启用账号':'停用账号'}</button>`,`account-${x.id}`,x.display_name||'账号')}</td></tr>`},
         devices:{title:"设备",placeholder:"搜索名称、型号或连接地址",add:"手动登记",cols:["设备名称","厂商 / 型号","系统 / 分辨率","连接状态","最后在线","电量（最近采集）","设备状态","操作"],data:state.devices.filter(x=>`${x.name} ${x.manufacturer} ${x.model} ${x.os} ${x.os_version} ${x.agent_name} ${x.adb_address||''}`.toLowerCase().includes(q)&&(!$("#connectionFilter").value||x.connection_status===$("#connectionFilter").value)),row:deviceRow},
-        sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"登记登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?`<button class="secondary" data-status="ended" data-id="${x.id}" data-kind="sessions">结束记录</button> <button class="secondary" data-status="verification_needed" data-id="${x.id}" data-kind="sessions">需验证</button>`:"—"}</td></tr>`}
+        sessions:{title:"登录记录",placeholder:"搜索账号或设备",add:"登记登录",cols:["工作账号","设备","登录确认时间","状态","备注","操作"],data:state.sessions.filter(x=>`${x.account_handle} ${x.device_name} ${x.note}`.toLowerCase().includes(q)),row:x=>`<tr><td>${safe(x.account_handle)}</td><td>${safe(x.device_name)}</td><td>${date(x.login_confirmed_at)}</td><td>${pill(x.status)}</td><td>${safe(x.note)||"—"}</td><td>${x.status==='active'?rowActions(`<button class="secondary" data-status="ended" data-id="${safe(x.id)}" data-kind="sessions">结束记录</button>`,`<button class="secondary" data-status="verification_needed" data-id="${safe(x.id)}" data-kind="sessions">标记需验证</button>`,`session-${x.id}`,'登录记录'):"—"}</td></tr>`}
       };
       const c=configs[state.view]; $("#viewTitle").textContent=c.title; $("#search").placeholder=c.placeholder; $("#addButton").textContent=c.add;
       $("#viewNotice").textContent=state.view==="accounts"?"手机号（国家/地区号 + 手机号）作为工作账号主体。当前不做号码格式正则校验；请勿在此录入密码、Cookie 或验证码。":state.view==="devices"?"连接手机并运行本机连接器后，设备资料自动入库。名称、备注和可用 / 维护 / 停用状态可手动编辑，自动同步会保留这些设置。": "登录记录由运营人员在平台完成登录后手动登记。请勿在此录入密码、Cookie 或验证码。";
