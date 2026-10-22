@@ -84,21 +84,25 @@ export async function main(){
     if(hardware&&deviceRef(hardware)===device.device_ref){serial=d.serial;break;}
   }
   if(!serial)throw new Error('The selected physical device is not connected');
+  const power=await adb('-s',serial,'shell','dumpsys','power');
+  if(/mWakefulness=(Asleep|Dozing)/.test(power))throw new Error('手机已息屏，请解锁并保持亮屏后再运行测试。');
   const control=await fetch(new URL('/api/connectors/control',api),{headers:{authorization:`Bearer ${process.env.DEVICE_CONNECTOR_TOKEN||config.token}`},signal:AbortSignal.timeout(10000)});
   if(!control.ok||!validateControls(await control.json(),config.connector_id||'local-adb').some(c=>c.device_ref===device.device_ref&&c.connection_mode==='active'))throw new Error('Device control policy does not permit testing');
-  const existing=await appiumCall(base,'/sessions');if(existing.length)throw new Error('Appium already has a session; close Inspector or finish the other operation first');
+  // Appium 3 protects session discovery; inspect only this phone's automation process.
+  let running='';try{running=await adb('-s',serial,'shell','pidof','io.appium.uiautomator2.server');}catch(error){if(error.code!==1)throw error;}
+  if(running.trim())throw new Error('The selected phone already has an automation session; finish it first');
   const note=await resolveNoteUrl(option('--url'));
   const report={device_id:device.id,account_id:account.id,login_confirmation:'operator',note_id:note.id,expected_title:option('--title'),expected_author:option('--author'),requested_action:args.includes('--like')?'ensure_liked':'inspect',started_at:new Date().toISOString()};
   const output=resolve(here,'../../../work/script-tests',new Date().toISOString().replace(/[:.]/g,'-'));
   await mkdir(output,{recursive:true});let sessionId;
   try{
-    const session=await appiumCall(base,'/session','POST',{capabilities:{alwaysMatch:{platformName:'Android','appium:automationName':'UiAutomator2','appium:udid':serial,'appium:noReset':true,'appium:autoLaunch':false,'appium:ignoreHiddenApiPolicyError':true,'appium:skipDeviceInitialization':true,'appium:skipServerInstallation':true,'appium:skipUnlock':true,'appium:newCommandTimeout':120},firstMatch:[{}]}});
+    const session=await appiumCall(base,'/session','POST',{capabilities:{alwaysMatch:{platformName:'Android','appium:automationName':'UiAutomator2','appium:udid':serial,'appium:noReset':true,'appium:autoLaunch':false,'appium:ignoreHiddenApiPolicyError':true,'appium:skipDeviceInitialization':true,'appium:skipServerInstallation':true,'appium:skipUnlock':true,'appium:skipLogcatCapture':true,'appium:uiautomator2ServerLaunchTimeout':60000,'appium:newCommandTimeout':120},firstMatch:[{}]}});
     sessionId=session.sessionId;const path='/session/'+sessionId;
     const inspect=async()=>inspectNote(await appiumCall(base,path+'/source'),await appiumCall(base,path+'/appium/device/current_activity'),option('--title'),option('--author'));
     await appiumCall(base,path+'/execute/sync','POST',{script:'mobile: deepLink',args:[{url:note.url,package:'com.xingin.xhs'}]});
-    let page;const deadline=Date.now()+20000;
-    while(Date.now()<deadline){try{page=await inspect();break;}catch{await sleep(750);}}
-    if(!page)throw new Error('The expected note did not appear within 20 seconds');
+    let page,lastError;const deadline=Date.now()+30000;
+    while(Date.now()<deadline){try{page=await inspect();break;}catch(error){lastError=error.message;await sleep(750);}}
+    if(!page)throw new Error(`The expected note did not appear within 30 seconds: ${lastError||'page unavailable'}`);
     report.before=page;await writeFile(resolve(output,'before.png'),Buffer.from(await appiumCall(base,path+'/screenshot'),'base64'));
     if(args.includes('--like')){
       page=await inspect();
