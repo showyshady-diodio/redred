@@ -1,5 +1,9 @@
 # MCN account management MVP
 
+## Manual APK installation (2026-10-22)
+
+The existing Devices page now has an Install APK action per enrolled device. See [APK-INSTALLATION.md](APK-INSTALLATION.md) for the local installer, allowed file directories, authorization, and result handling. This uses local physical Android devices, without AWS. Apply only migration 0005 to existing databases; older migrations were applied directly and must not be replayed with `migrations apply`.
+
 Minimal Cloudflare Pages + D1 application for maintaining work-account records, device records, and operator-confirmed login history.
 
 ## Device auto-sync (2026-10-21)

@@ -48,6 +48,7 @@
   <dialog id="dialog"><form class="form" id="form"><h2 id="formTitle"></h2><div class="fields" id="fields"></div><div class="form-actions"><button type="button" class="secondary" id="cancel">取消</button><button class="primary">保存</button></div></form></dialog>
   <dialog id="deviceDialog"><div class="form"><h2>设备详情</h2><dl id="deviceDetails" class="detail-grid"></dl><div class="form-actions"><button type="button" class="secondary" id="closeDevice">关闭</button></div></div></dialog>
   <dialog id="controlDialog"><form class="form" id="controlForm"><h2>授权设备连接管理</h2><div class="fields"><label>设备控制码<input id="controlCode" type="password" required minlength="32" maxlength="256" autocomplete="off"></label></div><div class="notice">暂停和恢复会改变手机与电脑的连接。输入本机保存的设备控制码后，本标签页可继续操作。</div><div class="danger" id="controlError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" id="cancelControl">取消</button><button class="primary" id="confirmControl">授权并执行</button></div></form></dialog>
+  <dialog id="installDialog"><form class="form" id="installForm"><h2 id="installTitle">安装 APK</h2><div class="fields"><label>本机安装包<select id="installPackage" required></select></label><label>设备控制码<input id="installCode" type="password" autocomplete="off" maxlength="256" placeholder="本标签页已授权时可留空"></label></div><div class="notice">将 APK 放入连接手机电脑的 D:\Codex 或 D:\Codex\account-management\work\apks 目录，安装器运行后会自动出现在列表。安装会保留已有应用数据；手机可能要求确认安装。</div><div id="installError" class="danger" role="alert"></div><div class="form-actions"><button type="button" class="secondary" id="closeInstall">关闭</button><button class="primary" id="submitInstall">安装到此设备</button></div><h3>最近安装记录</h3><div id="installHistory" class="notice"></div></form></dialog>
   <script type="module">
     const labels = { active:"正常", paused:"已暂停", pausing:"暂停中", resuming:"恢复中", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束", unpaired:"未接入", online:"在线", offline:"离线", attention:"需检查" };
     const state = { view:['accounts','devices','sessions'].includes(location.hash.slice(1))?location.hash.slice(1):'accounts', accounts:[], devices:[], sessions:[], connectors:[], configured:false, loadError:false, loadedAt:null };
@@ -85,7 +86,9 @@
       return connector.device_count===0?'电脑连接器正常，手机尚未连接。系统正在自动发现和重连；若持续离线，请检查手机无线调试及同一局域网。':'';
     }
     function deviceRow(x) {
-      const controls=x.connector_id&&x.connection_type==='wireless'?` <button class="secondary" data-device-control="${safe(x.id)}" data-connection-action="${x.connection_mode==='paused'?'resume':'pause'}">${x.connection_mode==='paused'?'恢复连接':'暂停连接'}</button>`:'';
+      let controls=x.connector_id&&x.connection_type==='wireless'?` <button class="secondary" data-device-control="${safe(x.id)}" data-connection-action="${x.connection_mode==='paused'?'resume':'pause'}">${x.connection_mode==='paused'?'恢复连接':'暂停连接'}</button>`:'';
+      const install=x.connector_id?` <button class="secondary" data-install-device="${safe(x.id)}">安装 APK</button>`:'';
+      controls+=install;
       const detail=x.control_error?`<div class="sub danger">${safe(x.control_error)}</div>`:['pausing','resuming'].includes(x.connection_status)?'<div class="sub">等待连接器执行</div>':'';
       return `<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||'—'}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||'—'}<div class="sub">${safe(x.screen_resolution)||'—'}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div>${detail}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td><button class="secondary" data-device-detail="${safe(x.id)}">详情</button> <button class="secondary" data-edit-device="${safe(x.id)}">编辑</button>${controls}</td></tr>`;
     }
@@ -167,8 +170,47 @@
       const values=[['连接管理',device.connection_mode==='paused'?'暂停连接':'允许连接'],['执行结果',device.control_error||(pending?'等待连接器执行':'已确认')],['确认时间',date(device.control_ack_at)]];
       $("#deviceDetails").insertAdjacentHTML('beforeend',values.map(([name,value])=>`<dt>${safe(name)}</dt><dd>${safe(value)}</dd>`).join(''));
     });
+    let installationDevice=null,installationRequest=null,installationBusy=false;
+    const installationLabels={queued:'等待执行',running:'正在安装',succeeded:'安装成功',failed:'安装失败',unknown:'结果待核实'};
+    async function refreshInstallations(){
+      if(!installationDevice||!$('#installDialog').open)return;
+      const deviceId=installationDevice.id;
+      try{
+        const [packages,history]=await Promise.all([api('apks'),api(`installations?device_id=${encodeURIComponent(deviceId)}`)]);
+        if(installationDevice?.id!==deviceId)return;
+        const chosen=$('#installPackage').value;
+        const available=packages.filter(p=>p.connector_id===installationDevice.connector_id&&p.installer_online);
+        $('#installPackage').innerHTML=available.length?available.map(p=>`<option value="${safe(p.id)}">${safe(p.filename)} · ${(p.size_bytes/1024/1024).toFixed(1)} MB · ${safe(p.sha256.slice(0,12))}</option>`).join(''):'<option value="">安装器未在线或尚未发现 APK</option>';
+        if(available.some(p=>p.id===chosen))$('#installPackage').value=chosen;
+        const device=state.devices.find(d=>d.id===deviceId)||installationDevice;
+        const ready=device.connection_mode==='active'&&device.connection_status==='online'&&device.status==='available';
+        $('#submitInstall').disabled=installationBusy||!available.length||!ready||history.some(j=>['queued','running'].includes(j.status));
+        $('#installHistory').innerHTML=(ready?'':'<p>设备需恢复连接、在线且处于可用状态，才能创建安装任务。</p>')+(history.length?history.map(j=>`<p><strong>${safe(installationLabels[j.status]||j.status)}</strong> · ${safe(j.filename)}<br>${safe(j.message||'等待本机安装器领取任务')}<br><span class="sub">${date(j.created_at)}</span></p>`).join(''):'暂无安装记录。');
+      }catch(error){$('#installError').textContent=error.message;$('#submitInstall').disabled=true;}
+    }
+    $('#rows').addEventListener('click',async e=>{
+      const button=e.target.closest('[data-install-device]');if(!button)return;
+      installationDevice=state.devices.find(d=>d.id===button.dataset.installDevice);if(!installationDevice)return;
+      installationRequest=null;$('#installCode').value='';$('#installError').textContent='';$('#installTitle').textContent=`安装 APK · ${installationDevice.name}`;
+      $('#submitInstall').disabled=true;$('#installDialog').showModal();await refreshInstallations();
+    });
+    $('#closeInstall').addEventListener('click',()=>$('#installDialog').close());
+    $('#installDialog').addEventListener('close',()=>{installationDevice=null;installationRequest=null;$('#installCode').value='';});
+    $('#installPackage').addEventListener('change',()=>{installationRequest=null;});
+    $('#installForm').addEventListener('submit',async e=>{
+      e.preventDefault();if(!installationDevice||installationBusy)return;
+      const code=$('#installCode').value.trim()||controlCode;
+      if(!code){$('#installError').textContent='请先输入设备控制码。';return;}
+      installationRequest||={device_id:installationDevice.id,package_id:$('#installPackage').value,request_id:crypto.randomUUID()};
+      installationBusy=true;$('#submitInstall').disabled=true;$('#installError').textContent='';
+      try{
+        await api('installations',{method:'POST',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(installationRequest)});
+        saveControlCode(code);$('#installCode').value='';installationRequest=null;
+      }catch(error){if(error.status===401)saveControlCode('');if(error.status&&error.status!==401)installationRequest=null;$('#installError').textContent=error.message;}
+      finally{installationBusy=false;await refreshInstallations();}
+    });
     refresh();
-    setInterval(()=>{if(!document.hidden)refresh();},10000);
+    setInterval(()=>{if(!document.hidden){refresh();refreshInstallations();}},10000);
   </script>
 </body>
 </html>

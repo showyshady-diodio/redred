@@ -23,7 +23,7 @@ export function parseWindowsProxy(enabled, server) {
   return url.href;
 }
 
-async function configureNetwork(config) {
+export async function configureNetwork(config) {
   let proxy = config.proxy_url || '';
   const envProxy = process.env.https_proxy || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.HTTP_PROXY;
   if (!proxy && !envProxy && process.platform === 'win32' && config.use_system_proxy !== false) {
