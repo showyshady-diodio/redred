@@ -1,6 +1,7 @@
 export const STALE_SECONDS = 90;
 
 export function effectiveDevice(row) {
+  if(row?.connector_enabled===0)return {...row,connection_status:'offline'};
   if (row?.connection_mode === 'paused') {
     return { ...row, connection_status: row.control_ack_revision === row.control_revision && !row.control_error
       ? 'paused' : row.control_error ? 'attention' : 'pausing' };

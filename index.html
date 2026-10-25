@@ -41,9 +41,9 @@
       <div class="notice" id="viewNotice">正在加载账号、设备和任务资料…</div>
     </section>
     <section class="panel" id="connectorPanel" hidden>
-      <div class="bar"><div><h2>设备连接器</h2><div class="sub">连接器每 20 秒采集并自动保存，页面每 10 秒刷新。</div></div><span class="sub" id="syncTime" role="status"></span></div>
+      <div class="bar"><div><h2>执行电脑</h2><div class="sub">日常使用主电脑；测试电脑临时接入，共享账号、任务与执行记录。</div></div><div class="controls"><span class="sub" id="syncTime" role="status"></span><button class="secondary" id="registerComputer">接入测试电脑</button></div></div>
       <div id="connectorList" class="connector-grid"></div>
-      <div class="notice">测试结束可点击“暂停连接”：采集器确认断开后显示“已暂停”，停止采集和自动重连。笔记任务需本机任务执行器与 Appium 同时运行，手机保持解锁亮屏。</div>
+      <div class="notice">任务始终由设备所属电脑执行。朋友只开发代码时无需接入电脑；要连接自己的手机测试时，下载独立配置即可，无需 Cloudflare 登录。换电脑连接同一手机，请在设备“更多 → 转移电脑”中指定归属。手机仍需解锁亮屏。</div>
     </section>
   </main>
 
@@ -62,6 +62,8 @@
   </div><div class="notice">保存仅创建任务。点击列表“执行”时再选择设备与工作账号。编辑不改变已有执行明细中的参数。</div><div class="danger" id="taskFormError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="taskDialog">取消</button><button class="primary" id="saveTask">保存任务</button></div></form></dialog>
   <dialog id="runDialog"><form class="form" id="runForm"><h2 id="runTitle">执行任务</h2><div class="fields"><label>指定设备<select id="runDevice" required></select></label><label>工作账号<select id="runAccount" required></select></label><label>设备控制码<input id="runCode" type="password" autocomplete="off" maxlength="256" placeholder="本标签页已授权时可留空"></label></div><div class="notice" id="runGuide"></div><div class="danger" id="runError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="runDialog">取消</button><button class="primary" id="submitRun">加入执行队列</button></div></form></dialog>
   <dialog id="taskDetailsDialog"><div class="form"><div class="bar"><h2 id="taskDetailsTitle">执行明细</h2><button type="button" class="secondary" id="refreshTaskDetails">刷新明细</button></div><div id="taskMetadata" class="notice"></div><div id="taskTotals" class="task-summary"></div><div class="sub" style="margin-bottom:12px">最近 200 条执行明细；统计包含全部明细。已完成 = 操作前已处于目标状态，本次跳过，不增加动作数。</div><div class="table-wrap"><table><thead><tr><th>时间 / 任务</th><th>设备 / 工作账号</th><th>状态</th><th>点赞</th><th>收藏</th><th>关注</th><th>结果说明</th></tr></thead><tbody id="taskRunRows"></tbody></table></div><div class="danger" id="taskDetailsError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="taskDetailsDialog">关闭</button></div></div></dialog>
+  <dialog id="computerDialog"><form class="form" id="computerForm"><h2>接入测试电脑</h2><div class="fields"><label>电脑名称<input id="computerName" maxlength="100" required placeholder="如：朋友的测试电脑"></label><label>设备控制码<input id="computerCode" type="password" maxlength="256" autocomplete="off" placeholder="本标签页已授权时可留空"></label></div><div class="notice">生成独立连接器编号，共享本项目连接令牌。配置不包含 Cloudflare 登录授权。请把配置交给对应测试电脑，不要复制主电脑的运行状态目录。</div><div class="notice" id="computerResult" hidden></div><div class="danger" id="computerError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="computerDialog">关闭</button><button type="button" class="secondary" id="downloadComputerConfig" hidden>下载配置</button><button class="primary" id="createComputer">生成并下载配置</button></div></form></dialog>
+  <dialog id="transferDialog"><form class="form" id="transferForm"><h2 id="transferTitle">转移设备到其他电脑</h2><div class="fields"><label>目标电脑<select id="transferComputer" required></select></label><label>设备控制码<input id="transferCode" type="password" maxlength="256" autocomplete="off" placeholder="本标签页已授权时可留空"></label></div><div class="notice">设备和账号登录记录保留。转移后等待目标电脑发现手机；原电脑不再领取此设备任务。有排队、执行或安装任务时不能转移。请先让旧电脑断开这台手机，再在目标电脑配对连接。</div><div class="danger" id="transferError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="transferDialog">取消</button><button class="primary" id="submitTransfer">确认转移</button></div></form></dialog>
   <script type="module">
     const labels = { active:"正常", paused:"已暂停", pausing:"暂停中", resuming:"恢复中", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束", unpaired:"未接入", online:"在线", offline:"离线", attention:"需检查" };
     const state = { view:['accounts','devices','sessions','tasks'].includes(location.hash.slice(1))?location.hash.slice(1):'accounts', accounts:[], devices:[], sessions:[], tasks:[], connectors:[], configured:false, loadError:false, loadedAt:null };
@@ -117,7 +119,7 @@
     function deviceRow(x) {
       let controls=x.connector_id&&x.connection_type==='wireless'?` <button class="secondary" data-device-control="${safe(x.id)}" data-connection-action="${x.connection_mode==='paused'?'resume':'pause'}">${x.connection_mode==='paused'?'恢复连接':'暂停连接'}</button>`:'';
       const install=x.connector_id?` <button class="secondary" data-install-device="${safe(x.id)}">安装 APK</button>`:'';
-      controls+=install+` <button class="secondary" data-login-device="${safe(x.id)}">账号登录</button>`;
+      controls+=install+` <button class="secondary" data-login-device="${safe(x.id)}">账号登录</button>`+(x.connector_id?` <button class="secondary" data-transfer-device="${safe(x.id)}">转移电脑</button>`:'');
       const detail=x.control_error?`<div class="sub danger">${safe(x.control_error)}</div>`:['pausing','resuming'].includes(x.connection_status)?'<div class="sub">等待连接器执行</div>':'';
       return `<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||'—'}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||'—'}<div class="sub">${safe(x.screen_resolution)||'—'}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div>${detail}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td>${rowActions(`<button class="secondary" data-device-detail="${safe(x.id)}">详情</button>`,`<button class="secondary" data-edit-device="${safe(x.id)}">编辑设备</button>${controls}`,`device-${x.id}`,x.name)}</td></tr>`;
     }
@@ -140,7 +142,7 @@
       $("#deviceSummary").textContent=state.loadError?'设备状态暂不可用':`共 ${state.devices.length} 台 · 在线 ${state.devices.filter(d=>d.connection_status==='online').length} · 已暂停 ${state.devices.filter(d=>d.connection_status==='paused').length} · 处理中 ${state.devices.filter(d=>['pausing','resuming'].includes(d.connection_status)).length} · 需检查 ${state.devices.filter(d=>d.connection_status==='attention').length} · 离线 ${state.devices.filter(d=>d.connection_status==='offline').length}`;
       $("#syncTime").textContent=state.loadError?'刷新失败，请重试':state.loadedAt?`更新于 ${state.loadedAt.toLocaleTimeString('zh-CN',{hour12:false})}`:'';
       const appiumLabels={ready:'服务可用',unavailable:'服务不可用',not_configured:'未接入'};
-      $("#connectorList").innerHTML=state.loadError?'<div class="notice">连接器信息加载失败。</div>':state.connectors.length?state.connectors.map(c=>`<div class="connector-card"><strong>${safe(c.name)} ${pill(c.status)}</strong><div class="sub">最近上报：${date(c.last_seen_at)}</div><div>最近发现 ${safe(c.device_count)} 台设备 · Appium ${safe(appiumLabels[c.appium_status]||c.appium_status)}</div>${connectionHint(c)?`<div class="notice">${safe(connectionHint(c))}</div>`:''}${c.last_error?`<div class="danger">${safe(c.last_error)}</div>`:''}</div>`).join(''):`<div class="notice">${state.configured?'尚无连接器上报。请在本机启动设备连接器，已授权设备会自动出现在这里。':'连接器尚未启用，请先配置服务端连接器密钥，再启动本机连接器。'}</div>`;
+      $("#connectorList").innerHTML=state.loadError?'<div class="notice">连接器信息加载失败。</div>':state.connectors.length?state.connectors.map(c=>`<div class="connector-card"><strong>${safe(c.name)} ${pill(c.status)}</strong><div class="sub">${c.role==='primary'?'主执行电脑':'临时测试电脑'} · ${safe(c.id)}</div><div class="sub">最近上报：${c.last_seen_at&&Date.parse(c.last_seen_at)>0?date(c.last_seen_at):'尚未接入'}</div><div>发现 ${safe(c.device_count)} 台 · Appium ${safe(appiumLabels[c.appium_status]||c.appium_status)} · 执行器${c.task_worker_online?'在线':'离线'}</div>${connectionHint(c)?`<div class="notice">${safe(connectionHint(c))}</div>`:''}${c.last_error?`<div class="danger">${safe(c.last_error)}</div>`:''}<button class="secondary" data-computer-control="${safe(c.id)}" data-enabled="${c.enabled?0:1}">${c.enabled?'停用接入':'恢复接入'}</button></div>`).join(''):`<div class="notice">${state.configured?'尚无连接器上报。请在本机启动设备连接器，已授权设备会自动出现在这里。':'连接器尚未启用，请先配置服务端连接器密钥，再启动本机连接器。'}</div>`;
       $("#head").innerHTML=`<tr>${c.cols.map(t=>`<th>${t}</th>`).join("")}</tr>`;
       $("#rows").innerHTML=state.loadError?`<tr><td class="empty" colspan="${c.cols.length}">暂时无法加载数据。<button class="secondary" id="retryLoad">重试</button></td></tr>`:c.data.length?c.data.map(c.row).join(""):`<tr><td class="empty" colspan="${c.cols.length}">${q||isDevices&&$("#connectionFilter").value?'没有符合筛选条件的记录。':isDevices?'尚未接入设备。启动本机连接器后自动发现并保存。':`暂无记录。使用“${c.add}”开始登记。`}</td></tr>`;
     }
@@ -180,8 +182,8 @@
     let pendingControl=null,controlCode='';
     try{controlCode=sessionStorage.getItem('deviceControlCode')||'';}catch{}
     function saveControlCode(value){controlCode=value;try{if(value)sessionStorage.setItem('deviceControlCode',value);else sessionStorage.removeItem('deviceControlCode');}catch{}}
-    function authorizeControl(control,message=''){pendingControl=control;$('#controlDialog h2').textContent=control.kind==='sessions'?'授权登录记录操作':'授权设备连接管理';$('#controlDialog .notice').textContent=control.kind==='sessions'?'此操作会更新人工确认的登录记录，不会替你退出或切换手机上的账号。':'暂停和恢复会改变手机与电脑的连接。输入本机保存的设备控制码后，本标签页可继续操作。';$("#controlCode").value='';$("#controlError").textContent=message;$("#controlDialog").showModal();}
-    async function sendControl(control,code){await api(`${control.kind==='sessions'?'sessions':'devices'}/${control.id}`,{method:'PATCH',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(control.kind==='sessions'?{status:control.action}:{connection_action:control.action})});await refresh();}
+    function authorizeControl(control,message=''){pendingControl=control;$('#controlDialog h2').textContent=control.kind==='sessions'?'授权登录记录操作':control.kind==='computer'?'电脑接入管理':'授权设备连接管理';$('#controlDialog .notice').textContent=control.kind==='sessions'?'此操作会更新人工确认的登录记录，不会替你退出或切换手机上的账号。':control.kind==='computer'?'停用后此电脑不能继续采集或领取任务；已有排队或执行任务时，需先完成或取消。共享连接令牌不变，此操作不会影响其他电脑。':'暂停和恢复会改变手机与电脑的连接。输入本机保存的设备控制码后，本标签页可继续操作。';$("#controlCode").value='';$("#controlError").textContent=message;$("#controlDialog").showModal();}
+    async function sendControl(control,code){await api(control.kind==='computer'?'connectors/manage':`${control.kind==='sessions'?'sessions':'devices'}/${control.id}`,{method:control.kind==='computer'?'POST':'PATCH',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(control.kind==='computer'?{connector_id:control.id,enabled:control.action}:control.kind==='sessions'?{status:control.action}:{connection_action:control.action})});await refresh();}
     $("#rows").addEventListener('click',async e=>{
       const button=e.target.closest('[data-device-control]');if(!button)return;
       const control={id:button.dataset.deviceControl,action:button.dataset.connectionAction};
@@ -302,7 +304,7 @@
     function openExecution(task){
       executionTask=task;executionRequest=null;$('#runTitle').textContent='执行任务 · '+task.name;$('#runError').textContent='';$('#runCode').value='';
       const available=state.devices.filter(d=>d.status==='available'&&d.connection_mode==='active'&&d.connection_status==='online');
-      $('#runDevice').innerHTML=available.length?available.map(d=>`<option value="${safe(d.id)}">${safe(d.name)}</option>`).join(''):'<option value="">无可用设备</option>';
+      $('#runDevice').innerHTML=available.length?available.map(d=>`<option value="${safe(d.id)}">${safe(d.name)} · ${safe(d.connector_name||d.agent_name)}</option>`).join(''):'<option value="">无可用设备</option>';
       updateExecutionAccount();$('#runDialog').showModal();
     }
     $('#runDialog').addEventListener('close',()=>{$('#runCode').value='';});
@@ -343,6 +345,39 @@
       if(button.dataset.accountRuns){openExecutionDetails({accountId:button.dataset.accountRuns});return;}
       const task=state.tasks.find(t=>t.id===(button.dataset.runTask||button.dataset.editTask||button.dataset.taskDetails));if(!task)return;
       if(button.dataset.runTask)openExecution(task);else if(button.dataset.editTask)openTaskForm(task);else openExecutionDetails({taskId:task.id});
+    });
+    let computerConfig=null,computerRequest=null,transferDevice=null;
+    function downloadComputerConfig(){
+      if(!computerConfig)return;const blob=new Blob([JSON.stringify(computerConfig,null,2)+'\n'],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+      link.href=url;link.download='connector.testing.local.json';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }
+    $('#registerComputer').addEventListener('click',()=>{computerConfig=null;computerRequest=null;$('#computerForm').reset();$('#computerError').textContent='';$('#computerResult').hidden=true;$('#downloadComputerConfig').hidden=true;$('#createComputer').hidden=false;$('#computerDialog').showModal();});
+    $('#computerDialog').addEventListener('close',()=>{computerConfig=null;$('#computerCode').value='';});
+    $('#downloadComputerConfig').addEventListener('click',downloadComputerConfig);
+    $('#computerForm').addEventListener('submit',async event=>{
+      event.preventDefault();const code=$('#computerCode').value.trim()||controlCode;
+      if(!code){$('#computerError').textContent='请输入设备控制码。';return;}
+      computerRequest||={name:$('#computerName').value.trim(),request_id:crypto.randomUUID()};$('#createComputer').disabled=true;$('#computerError').textContent='';
+      try{const result=await api('connectors/register',{method:'POST',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(computerRequest)});computerConfig=result.config;saveControlCode(code);$('#computerCode').value='';$('#computerResult').hidden=false;$('#computerResult').textContent='配置已生成。交给朋友并放到项目 connector 目录，运行 node connector/setup-workstation.mjs --config connector/connector.testing.local.json --adb 该电脑的adb.exe路径，然后按共享测试说明启动服务。';$('#downloadComputerConfig').hidden=false;$('#createComputer').hidden=true;downloadComputerConfig();await refresh();}
+      catch(error){if(error.status===401)saveControlCode('');$('#computerError').textContent=error.message;}
+      finally{$('#createComputer').disabled=false;}
+    });
+    $('#computerName').addEventListener('input',()=>{computerRequest=null;});
+    $('#connectorList').addEventListener('click',async event=>{
+      const button=event.target.closest('[data-computer-control]');if(!button)return;const control={kind:'computer',id:button.dataset.computerControl,action:button.dataset.enabled==='1'};
+      if(!controlCode){authorizeControl(control);return;}button.disabled=true;
+      try{await sendControl(control,controlCode);}catch(error){if(error.status===401){saveControlCode('');authorizeControl(control,error.message);}else alert(error.message);}finally{button.disabled=false;}
+    });
+    $('#rows').addEventListener('click',event=>{
+      const button=event.target.closest('[data-transfer-device]');if(!button)return;transferDevice=state.devices.find(d=>d.id===button.dataset.transferDevice);if(!transferDevice)return;
+      const targets=state.connectors.filter(c=>c.enabled&&c.id!==transferDevice.connector_id);$('#transferComputer').innerHTML=targets.length?targets.map(c=>`<option value="${safe(c.id)}">${safe(c.name)} · ${c.role==='primary'?'主电脑':'测试电脑'}${c.status==='offline'?'（未在线）':''}</option>`).join(''):'<option value="">请先接入其他电脑</option>';
+      $('#transferTitle').textContent='转移设备 · '+transferDevice.name;$('#transferCode').value='';$('#transferError').textContent='';$('#submitTransfer').disabled=!targets.length;$('#transferDialog').showModal();
+    });
+    $('#transferDialog').addEventListener('close',()=>{$('#transferCode').value='';});
+    $('#transferForm').addEventListener('submit',async event=>{
+      event.preventDefault();const code=$('#transferCode').value.trim()||controlCode;if(!code){$('#transferError').textContent='请输入设备控制码。';return;}$('#submitTransfer').disabled=true;
+      try{await api('devices/'+transferDevice.id,{method:'PATCH',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify({connector_id:$('#transferComputer').value})});saveControlCode(code);$('#transferDialog').close();await refresh();}
+      catch(error){$('#transferError').textContent=error.message;}finally{$('#submitTransfer').disabled=false;}
     });
     refresh();
     setInterval(()=>{if(!document.hidden){refresh();refreshInstallations();refreshExecutionDetails();}},10000);

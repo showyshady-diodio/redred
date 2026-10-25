@@ -1,0 +1,22 @@
+import { readFile,writeFile,mkdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { resolve,dirname } from 'node:path';
+import { workstationInstance,adbExecutable } from './workstation.mjs';
+
+const args=process.argv.slice(2),option=name=>{const i=args.indexOf(name);return i<0?'':args[i+1]||'';};
+if(!option('--config'))throw new Error('Usage: node connector/setup-workstation.mjs --config connector/connector.testing.local.json --adb C:/path/platform-tools/adb.exe');
+const configPath=resolve(option('--config')),config=JSON.parse(await readFile(configPath,'utf8'));
+if(!/^[a-zA-Z0-9_-]{1,80}$/.test(config.connector_id)||typeof config.token!=='string'||config.token.length<32)throw new Error('Download a valid computer configuration from Devices > Add test computer');
+const api=new URL(config.api_url);if(api.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(api.hostname))throw new Error('Invalid backend URL');
+if(option('--adb'))config.adb_path=resolve(option('--adb'));
+const adb=adbExecutable(configPath,config.adb_path||'adb');
+const result=await promisify(execFile)(adb,['version'],{timeout:10000,windowsHide:true});
+if(!result.stdout.includes('Android Debug Bridge'))throw new Error('ADB did not return its version');
+config.apk_roots||=['./apks'];config.work_dir||='./work';config.appium_url||='http://127.0.0.1:4723';
+if(!['localhost','127.0.0.1'].includes(new URL(config.appium_url).hostname))throw new Error('Appium must run on this computer');
+await mkdir(resolve(dirname(configPath),config.work_dir),{recursive:true});
+await writeFile(configPath,JSON.stringify(config,null,2)+'\n',{mode:0o600});
+await workstationInstance(configPath);
+console.log('Computer configuration prepared: '+config.connector_id);
+console.log('No Cloudflare login is needed. See SHARED-TESTING.md for phone pairing and service startup.');

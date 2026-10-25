@@ -1,5 +1,6 @@
 import { badRequest, body, id, json } from '../_shared.js';
 import { authorized } from '../_telemetry.js';
+import { connectorAccess } from '../_connectors.js';
 
 const text = (value, max = 200) => typeof value === 'string' && value.length <= max;
 
@@ -21,8 +22,8 @@ export async function onRequestPost({ request, env }) {
     chunks.push(value);
   }
   const data = await body(new Response(new Blob(chunks)));
-  const connectorId = env.DEVICE_CONNECTOR_ID || 'local-adb';
-  if (!data || data.connector_id !== connectorId || !text(data.agent_name, 100) || !data.agent_name.trim() ||
+  const connectorId = data?.connector_id;
+  if (!data || !text(data.agent_name, 100) || !data.agent_name.trim() ||
       !Array.isArray(data.devices) || data.devices.length > 50 ||
       !text(data.adb_version || '') || !['ready', 'unavailable', 'not_configured'].includes(data.appium_status) ||
       !text(data.last_error || '', 500)) return badRequest('Invalid connector snapshot');
@@ -59,18 +60,22 @@ export async function onRequestPost({ request, env }) {
       return badRequest('Resume acknowledgement requires a connected device');
     }
   }
+  const denied=await connectorAccess(request,env,connectorId);if(denied)return denied;
+  let ignored=0;
   if (seen.size) {
     const refs = [...seen];
     const { results } = await env.DB.prepare(`SELECT device_ref FROM devices WHERE device_ref IN (${refs.map(() => '?').join(',')}) AND connector_id <> ?`)
       .bind(...refs, connectorId).all();
-    if (results.length) return json({ error: 'Device belongs to another connector' }, 409);
+    const foreign=new Set(results.map(d=>d.device_ref));ignored=foreign.size;
+    data.devices=data.devices.filter(d=>!foreign.has(d.device_ref));
+    for(const ref of foreign)seen.delete(ref);
   }
   const now = new Date().toISOString();
   const statements = [env.DB.prepare(`INSERT INTO device_connectors
     (id, name, last_seen_at, device_count, adb_version, appium_status, last_error) VALUES (?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET name=excluded.name, last_seen_at=excluded.last_seen_at,
     device_count=excluded.device_count, adb_version=excluded.adb_version, appium_status=excluded.appium_status, last_error=excluded.last_error`)
-    .bind(connectorId, data.agent_name.trim(), now, seen.size, data.adb_version || '', data.appium_status, data.last_error || ''),
+    .bind(connectorId, data.agent_name.trim(), now, seen.size, data.adb_version || '', data.appium_status, [data.last_error,ignored?`忽略 ${ignored} 台归属其他电脑的设备；如需换电脑，请在设备更多操作中转移。`:''].filter(Boolean).join('; ').slice(0,500)),
     env.DB.prepare("UPDATE devices SET connection_status='offline', adb_state='offline' WHERE connector_id=? AND connection_status<>'offline'").bind(connectorId)];
   for (const d of data.devices) {
     statements.push(env.DB.prepare(`INSERT INTO devices
@@ -89,7 +94,7 @@ export async function onRequestPost({ request, env }) {
         charging=CASE WHEN excluded.adb_state='device' THEN excluded.charging ELSE devices.charging END,
         sdk_version=COALESCE(NULLIF(excluded.sdk_version,''),devices.sdk_version),
         collected_at=COALESCE(excluded.collected_at,devices.collected_at), collection_error=excluded.collection_error,
-        updated_at=excluded.updated_at WHERE devices.connection_mode = 'active'`)
+        updated_at=excluded.updated_at WHERE devices.connection_mode = 'active' AND devices.connector_id=excluded.connector_id`)
       .bind(id(), d.name, d.device_ref, connectorId, d.manufacturer || '', d.model || '', d.os || '', d.os_version || '',
         d.connection_status, data.agent_name.trim(), d.adb_state === 'device' ? now : null, d.battery_percent ?? null,
         d.screen_resolution || '', d.connection_type, d.adb_address || '', d.adb_state,
@@ -106,5 +111,5 @@ export async function onRequestPost({ request, env }) {
         result.mode, result.status, result.mode, result.status, connectorId, result.device_ref, result.revision, result.mode));
   }
   await env.DB.batch(statements);
-  return json({ ok: true, received: seen.size, server_time: now });
+  return json({ ok: true, received: seen.size, ignored, server_time: now });
 }

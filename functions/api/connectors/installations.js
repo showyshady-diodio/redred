@@ -1,13 +1,14 @@
 import { body,id,json } from '../_shared.js';
 import { authorized } from '../_telemetry.js';
 import { expireInstallations } from '../_installations.js';
+import { connectorAccess } from '../_connectors.js';
 
 export async function onRequestPost({env,request}) {
   if(!await authorized(request,env))return json({error:'Invalid connector token'},401);
   const text=await request.text();if(text.length>65536)return json({error:'Payload too large'},413);
   const data=await body(new Response(text));
-  const connectorId=env.DEVICE_CONNECTOR_ID||'local-adb';
-  if(!data || data.connector_id!==connectorId)return json({error:'Invalid connector'},400);
+  const connectorId=data?.connector_id;
+  const denied=await connectorAccess(request,env,connectorId);if(denied)return denied;
   const now=new Date().toISOString();
   if(data.action==='catalog') {
     if(!Array.isArray(data.packages)||data.packages.length>100)return json({error:'Invalid package catalog'},400);
@@ -27,7 +28,7 @@ export async function onRequestPost({env,request}) {
     const lease=id();
     const task=await env.DB.prepare(`UPDATE apk_installations SET status='running',lease_token=?,started_at=? WHERE id=(
       SELECT j.id FROM apk_installations j JOIN devices d ON d.id=j.device_id JOIN apk_packages p ON p.id=j.package_id
-      WHERE j.connector_id=? AND j.status='queued' AND d.connection_mode='active' AND d.status='available'
+      WHERE j.connector_id=? AND d.connector_id=j.connector_id AND j.status='queued' AND d.connection_mode='active' AND d.status='available'
       AND d.adb_state='device' AND d.connection_status='online' AND d.last_seen_at>? AND p.available=1
       ORDER BY j.created_at LIMIT 1) AND status='queued' RETURNING *`).bind(lease,now,connectorId,new Date(Date.now()-90000).toISOString()).first();
     return json({task:task||null});

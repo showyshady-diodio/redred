@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { workstationInstance,controlUrl,adbExecutable } from './workstation.mjs';
 import { createHash } from 'node:crypto';
 import * as http from 'node:http';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
@@ -253,7 +254,7 @@ export async function main() {
   const configIndex = args.indexOf('--config');
   const configPath = resolve(configIndex < 0 ? resolve(here, 'connector.local.json') : args[configIndex + 1]);
   const config = JSON.parse(await readFile(configPath, 'utf8'));
-  config.adb_path = resolve(dirname(configPath), config.adb_path || '../../../work/android-sdk/platform-tools/adb.exe');
+  config.adb_path = adbExecutable(configPath,config.adb_path || '../../../work/android-sdk/platform-tools/adb.exe');
   config.connector_id ||= 'local-adb';
   config.agent_name ||= hostname();
   const api = new URL(config.api_url);
@@ -265,6 +266,7 @@ export async function main() {
   }
   await configureNetwork(config);
   const token = process.env.DEVICE_CONNECTOR_TOKEN || config.token;
+  const instance=await workstationInstance(configPath);
   if (!args.includes('--dry-run') && (!token || token.length < 32)) throw new Error('Configure a connector token of at least 32 characters');
   const cachePath = resolve(dirname(configPath), '.state', `${basename(configPath)}.state.json`);
   let cache;
@@ -287,8 +289,8 @@ export async function main() {
     const cycleStart = Date.now();
     try {
       if (!args.includes('--dry-run')) {
-        const response = await fetch(new URL('/api/connectors/control', api), {
-          headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000), redirect: 'error',
+        const response = await fetch(controlUrl(api,config.connector_id), {
+          headers: { authorization: `Bearer ${token}`,'x-connector-instance':instance }, signal: AbortSignal.timeout(10000), redirect: 'error',
         });
         if (!response.ok) throw new Error(`Control sync HTTP ${response.status}; collection held until policy is available`);
         cache.controls = validateControls(await response.json(), config.connector_id);
@@ -300,7 +302,7 @@ export async function main() {
       if (args.includes('--dry-run')) console.log(JSON.stringify(payload, null, 2));
       else {
         const response = await fetch(new URL('/api/connectors/heartbeat', api), {
-          method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+          method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json','x-connector-instance':instance },
           body: JSON.stringify(payload), signal: AbortSignal.timeout(15000), redirect: 'error',
         });
         const result = await response.json().catch(() => ({}));

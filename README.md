@@ -1,5 +1,9 @@
 # MCN account management MVP
 
+Current shared development and temporary test-computer setup: [SHARED-TESTING.md](SHARED-TESTING.md). Use the original primary computer for daily execution. Test computers share project data and receive their own connector ID/configuration; no Cloudflare login is needed on those computers.
+
+The dated sections below describe earlier releases. For the current existing deployment, apply only new migration 0007 after 0006 has already been applied; do not replay old ALTER migrations or initialize the production database. Use SHARED-TESTING.md for current collaborator setup.
+
 ## Selected-account manual login and Appium tests (2026-10-22)
 
 The existing Devices > More menu now includes Account login. Login confirmation requires a device control code, an online device and explicit operator confirmation after logging in on the phone. See [MANUAL-LOGIN-TESTING.md](MANUAL-LOGIN-TESTING.md) for setup and the physical-device script. This preserves the existing account and device records and does not add cloud phones or group tasks.

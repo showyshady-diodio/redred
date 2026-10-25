@@ -4,6 +4,7 @@ import {readFile,writeFile,mkdir,rename} from 'node:fs/promises';
 import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {configureNetwork,parseDevices,deviceRef,validateControls} from './adb-connector.mjs';
+import {workstationInstance,controlUrl,adbExecutable} from './workstation.mjs';
 
 const here=dirname(fileURLToPath(import.meta.url)),exec=promisify(execFile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -178,7 +179,7 @@ export async function main(){
   if(!sessions.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Confirm the selected account login on the backend before testing');
   const installs=await get(`installations?device_id=${encodeURIComponent(device.id)}`);
   if(installs.some(j=>['queued','running'].includes(j.status)))throw new Error('The device has an installation task; wait before testing');
-  const adbPath=resolve(dirname(configPath),config.adb_path||'../../../work/android-sdk/platform-tools/adb.exe');
+  const adbPath=adbExecutable(configPath,config.adb_path||'../../../work/android-sdk/platform-tools/adb.exe');
   const adb=async(...a)=>(await exec(adbPath,a,{timeout:15000,windowsHide:true})).stdout;
   let serial;
   for(const d of parseDevices(await adb('devices','-l'))){
@@ -189,7 +190,8 @@ export async function main(){
   if(!serial)throw new Error('The selected physical device is not connected');
   const power=await adb('-s',serial,'shell','dumpsys','power');
   if(/mWakefulness=(Asleep|Dozing)/.test(power))throw new Error('手机已息屏，请解锁并保持亮屏后再运行测试。');
-  const control=await fetch(new URL('/api/connectors/control',api),{headers:{authorization:`Bearer ${process.env.DEVICE_CONNECTOR_TOKEN||config.token}`},signal:AbortSignal.timeout(10000)});
+  const instance=await workstationInstance(configPath);
+  const control=await fetch(controlUrl(api,config.connector_id||'local-adb'),{headers:{authorization:`Bearer ${process.env.DEVICE_CONNECTOR_TOKEN||config.token}`,'x-connector-instance':instance},signal:AbortSignal.timeout(10000)});
   if(!control.ok||!validateControls(await control.json(),config.connector_id||'local-adb').some(c=>c.device_ref===device.device_ref&&c.connection_mode==='active'))throw new Error('Device control policy does not permit testing');
   // Appium 3 protects session discovery; inspect only this phone's automation process.
   let running='';try{running=await adb('-s',serial,'shell','pidof','io.appium.uiautomator2.server');}catch(error){if(error.code!==1)throw error;}
@@ -198,7 +200,7 @@ export async function main(){
   const actions=['like','collect','follow'].filter(kind=>args.includes('--'+kind));
   let title=option('--title'),author=option('--author');
   const report={device_id:device.id,account_id:account.id,login_confirmation:'operator',note_id:note.id,expected_title:title,expected_author:author,requested_action:actions.length?'ensure_'+actions.join('_and_'):'inspect',actions:{},navigation:[],started_at:new Date().toISOString()};
-  const output=option('--output-dir')?resolve(option('--output-dir')):resolve(here,'../../../work/script-tests',new Date().toISOString().replace(/[:.]/g,'-'));
+  const output=option('--output-dir')?resolve(option('--output-dir')):resolve(dirname(configPath),config.work_dir||'../../../work','script-tests',new Date().toISOString().replace(/[:.]/g,'-'));
   await mkdir(output,{recursive:true});let sessionId;
   const checkpoint=async()=>{await writeFile(resolve(output,'report.tmp'),JSON.stringify(report,null,2));await rename(resolve(output,'report.tmp'),resolve(output,'report.json'));};
   report.status='running';await checkpoint();
@@ -215,7 +217,7 @@ export async function main(){
     };
     const checkReady=async()=>{
       const [current,logins,allAccounts]=await Promise.all([get(`devices/${device.id}`),get('sessions'),get('accounts')]);
-      if(current.connection_mode!=='active'||current.status!=='available'||!allAccounts.some(a=>a.id===account.id&&a.status==='active')||!logins.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Device/account policy or login binding changed; no action performed');
+      if(current.connector_id!==device.connector_id||current.connection_status!=='online'||current.connection_mode!=='active'||current.status!=='available'||!allAccounts.some(a=>a.id===account.id&&a.status==='active')||!logins.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Device/account policy or login binding changed; no action performed');
       if(option('--task-run-id')){
         const run=await get('task-runs/'+encodeURIComponent(option('--task-run-id')));
         if(run.status!=='running'||run.device_id!==device.id||run.account_id!==account.id)throw new Error('Task execution lease is no longer active');

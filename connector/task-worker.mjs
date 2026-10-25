@@ -3,6 +3,7 @@ import { readFile,writeFile,mkdir,rename,open,unlink } from 'node:fs/promises';
 import { resolve,dirname,basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configureNetwork } from './adb-connector.mjs';
+import { workstationInstance } from './workstation.mjs';
 
 const here=dirname(fileURLToPath(import.meta.url)),sleep=ms=>new Promise(r=>setTimeout(r,ms));
 export function executionResult(report,interrupted=false){
@@ -23,8 +24,9 @@ export async function main(){
   const config=JSON.parse(await readFile(configPath,'utf8'));config.connector_id||='local-adb';
   const api=new URL(config.api_url);if(api.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(api.hostname))throw new Error('Invalid API URL');
   await configureNetwork(config);
+  const instance=await workstationInstance(configPath);
   const call=async data=>{
-    const response=await fetch(new URL('/api/connectors/tasks',api),{method:'POST',headers:{authorization:`Bearer ${process.env.DEVICE_CONNECTOR_TOKEN||config.token}`,'content-type':'application/json'},body:JSON.stringify({connector_id:config.connector_id,...data}),signal:AbortSignal.timeout(15000),redirect:'error'});
+    const response=await fetch(new URL('/api/connectors/tasks',api),{method:'POST',headers:{authorization:`Bearer ${process.env.DEVICE_CONNECTOR_TOKEN||config.token}`,'content-type':'application/json','x-connector-instance':instance},body:JSON.stringify({connector_id:config.connector_id,...data}),signal:AbortSignal.timeout(15000),redirect:'error'});
     const result=await response.json();if(!response.ok)throw new Error(`Task API HTTP ${response.status}: ${result.error||'Request failed'}`);return result;
   };
   const statePath=resolve(here,'.state',`task-worker-${basename(configPath)}.json`),lockPath=statePath+'.lock';
@@ -51,7 +53,7 @@ export async function main(){
         await call({action:'heartbeat'});
         const {task}=await call({action:'claim'});
         if(task){
-          const output=resolve(here,'../../../work/task-runs',task.id);
+          const output=resolve(dirname(configPath),config.work_dir||'../../../work','task-runs',task.id);
           journal={task,output};await save();await mkdir(output,{recursive:true});
           const snapshot=task.snapshot;
           const childArgs=[resolve(here,'rednote-appium.mjs'),'--config',configPath,'--url',snapshot.note_url,'--device-id',task.device_id,'--account-id',task.account_id,'--task-run-id',task.id,'--output-dir',output];

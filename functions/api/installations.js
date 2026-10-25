@@ -20,7 +20,8 @@ export async function onRequestPost({env,request}) {
   if(!device)return json({error:'Device not found'},404);
   if(device.connection_mode!=='active' || device.connection_status!=='online' || device.status!=='available')return json({error:'请先恢复设备连接，并确认设备在线且处于可用状态。'},409);
   const apk=await env.DB.prepare(`SELECT p.*,i.last_seen_at FROM apk_packages p JOIN apk_installers i ON i.connector_id=p.connector_id WHERE p.id=? AND p.available=1`).bind(data.package_id).first();
-  if(!apk || apk.connector_id!==device.connector_id || Date.now()-Date.parse(apk.last_seen_at)>90000)return json({error:'安装器未在线，或该安装包不属于这台设备的电脑。'},409);
+  const computer=await env.DB.prepare('SELECT enabled FROM device_connectors WHERE id=?').bind(device.connector_id).first();
+  if(!computer?.enabled||!apk || apk.connector_id!==device.connector_id || Date.now()-Date.parse(apk.last_seen_at)>90000)return json({error:'电脑已停用、安装器未在线，或该安装包不属于这台设备的电脑。'},409);
   await expireInstallations(env.DB,device.connector_id);
   try {
     const now=new Date().toISOString();
@@ -29,7 +30,7 @@ export async function onRequestPost({env,request}) {
       .bind(data.request_id,apk.id,apk.filename,apk.sha256,apk.size_bytes,now,device.id).run();
     if(!result.meta.changes)return json({error:'设备状态已改变，请刷新后重试。'},409);
   } catch(error) {
-    if(/UNIQUE|constraint|device has/i.test(error.message))return json({error:'该设备已有安装或笔记执行任务，请等待完成后再操作。'},409);
+    if(/UNIQUE|constraint|device has|device owner/i.test(error.message))return json({error:'该设备已有安装或笔记执行任务，或设备归属已改变，请刷新后重试。'},409);
     throw error;
   }
   return json({id:data.request_id,status:'queued'},201);

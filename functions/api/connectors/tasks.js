@@ -1,11 +1,12 @@
 import { id,json } from '../_shared.js';
 import { authorized } from '../_telemetry.js';
 import { smallBody,expireTaskRuns,actionKinds } from '../_tasks.js';
+import { connectorAccess } from '../_connectors.js';
 
 export async function onRequestPost({env,request}){
   if(!await authorized(request,env))return json({error:'Invalid connector token'},401);
-  const data=await smallBody(request),connectorId=env.DEVICE_CONNECTOR_ID||'local-adb';
-  if(!data||data.connector_id!==connectorId)return json({error:'Invalid connector'},400);
+  const data=await smallBody(request),connectorId=data?.connector_id;
+  const denied=await connectorAccess(request,env,connectorId);if(denied)return denied;
   const now=new Date().toISOString();
   await env.DB.prepare('INSERT INTO task_workers(connector_id,last_seen_at)VALUES(?,?) ON CONFLICT(connector_id) DO UPDATE SET last_seen_at=excluded.last_seen_at').bind(connectorId,now).run();
   await expireTaskRuns(env.DB,connectorId);
@@ -16,7 +17,7 @@ export async function onRequestPost({env,request}){
   if(data.action==='claim'){
     const task=await env.DB.prepare(`UPDATE task_runs SET status='running',lease_token=?,started_at=?,updated_at=? WHERE id=(
       SELECT r.id FROM task_runs r JOIN devices d ON d.id=r.device_id JOIN work_accounts a ON a.id=r.account_id
-      WHERE r.connector_id=? AND r.status='queued' AND d.connection_mode='active' AND d.status='available' AND d.adb_state='device' AND d.last_seen_at>?
+      WHERE r.connector_id=? AND d.connector_id=r.connector_id AND r.status='queued' AND d.connection_mode='active' AND d.status='available' AND d.adb_state='device' AND d.last_seen_at>?
       AND a.status='active' AND EXISTS(SELECT 1 FROM account_device_sessions s WHERE s.device_id=r.device_id AND s.account_id=r.account_id AND s.status='active')
       AND NOT EXISTS(SELECT 1 FROM task_runs busy WHERE busy.connector_id=r.connector_id AND busy.status='running')
       AND NOT EXISTS(SELECT 1 FROM apk_installations i WHERE i.device_id=r.device_id AND i.status IN ('queued','running'))

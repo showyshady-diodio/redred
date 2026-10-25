@@ -33,6 +33,6 @@ Confirmed actions are atomically checkpointed to the local report after each act
 
 ## Release
 
-Apply only `migrations/0006-note-tasks.sql` to the existing D1 database before releasing the new Functions. Do not replay older migrations. `schema.sql` includes the same additive structures for clean local setup. Publish only the directory produced by `node prepare-deploy.mjs`.
+Task tables were introduced in `migrations/0006-note-tasks.sql`, which is already applied on the current production database. The shared-computer upgrade now requires only `migrations/0007-shared-workstations.sql`; do not replay earlier migrations. `schema.sql` includes the current structures for clean local setup. Publish only the directory produced by `node prepare-deploy.mjs`. See [SHARED-TESTING.md](SHARED-TESTING.md) for shared collaborator setup and current client startup.
 
 Validation: API/database tests cover authorization, active account/device binding, immutable snapshots, replay-safe partial counts, account/task totals, cancellation, APK mutual exclusion and expired leases. A local UI integration server using real in-memory SQLite verified task creation from a share message, dispatch, cancellation and matching account detail totals. Live dispatch and worker connectivity must also be checked after migration and deployment.

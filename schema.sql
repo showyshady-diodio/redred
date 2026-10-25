@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS device_connectors (
   device_count INTEGER NOT NULL DEFAULT 0,
   adb_version TEXT NOT NULL DEFAULT '',
   appium_status TEXT NOT NULL DEFAULT 'not_configured',
-  last_error TEXT NOT NULL DEFAULT ''
+  last_error TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+  instance_id TEXT NOT NULL DEFAULT '',
+  instance_seen_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS devices (
@@ -166,3 +169,15 @@ BEGIN SELECT RAISE(ABORT,'device has an installation'); END;
 CREATE TRIGGER IF NOT EXISTS installations_exclude_task BEFORE INSERT ON apk_installations
 WHEN NEW.status IN ('queued','running') AND EXISTS(SELECT 1 FROM task_runs WHERE device_id=NEW.device_id AND status IN ('queued','running'))
 BEGIN SELECT RAISE(ABORT,'device has a note task'); END;
+
+CREATE TRIGGER IF NOT EXISTS device_owner_busy BEFORE UPDATE OF connector_id ON devices
+WHEN OLD.connector_id IS NOT NEW.connector_id AND (
+  EXISTS(SELECT 1 FROM task_runs WHERE device_id=OLD.id AND status IN ('queued','running')) OR
+  EXISTS(SELECT 1 FROM apk_installations WHERE device_id=OLD.id AND status IN ('queued','running')))
+BEGIN SELECT RAISE(ABORT,'device has pending work'); END;
+CREATE TRIGGER IF NOT EXISTS task_runs_owner BEFORE INSERT ON task_runs
+WHEN NEW.connector_id IS NOT (SELECT connector_id FROM devices WHERE id=NEW.device_id) OR NOT EXISTS(SELECT 1 FROM device_connectors WHERE id=NEW.connector_id AND enabled=1)
+BEGIN SELECT RAISE(ABORT,'device owner changed'); END;
+CREATE TRIGGER IF NOT EXISTS installations_owner BEFORE INSERT ON apk_installations
+WHEN NEW.connector_id IS NOT (SELECT connector_id FROM devices WHERE id=NEW.device_id) OR NOT EXISTS(SELECT 1 FROM device_connectors WHERE id=NEW.connector_id AND enabled=1)
+BEGIN SELECT RAISE(ABORT,'device owner changed'); END;

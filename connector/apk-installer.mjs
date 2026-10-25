@@ -6,6 +6,7 @@ import { resolve,dirname,basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { configureNetwork,parseDevices,deviceRef,validateControls } from './adb-connector.mjs';
+import { workstationInstance,controlUrl,adbExecutable } from './workstation.mjs';
 
 const here=dirname(fileURLToPath(import.meta.url));
 const exec=promisify(execFile);
@@ -75,15 +76,16 @@ export async function main() {
   if(api.protocol!=='https:' && !(api.protocol==='http:'&&['localhost','127.0.0.1'].includes(api.hostname)))throw new Error('Invalid API URL');
   await configureNetwork(config);
   const token=process.env.DEVICE_CONNECTOR_TOKEN||config.token;
+  const instance=await workstationInstance(configPath);
   if(!token||token.length<32)throw new Error('Connector token is not configured');
-  const adbPath=resolve(dirname(configPath),config.adb_path||'../../../work/android-sdk/platform-tools/adb.exe');
+  const adbPath=adbExecutable(configPath,config.adb_path||'../../../work/android-sdk/platform-tools/adb.exe');
   const adb=async(...args)=>(await exec(adbPath,args,{timeout:args.includes('install')?600000:15000,windowsHide:true,maxBuffer:1024*1024})).stdout;
   const call=async data=>{
-    const response=await fetch(new URL('/api/connectors/installations',api),{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({connector_id:config.connector_id,...data}),signal:AbortSignal.timeout(15000),redirect:'error'});
+    const response=await fetch(new URL('/api/connectors/installations',api),{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json','x-connector-instance':instance},body:JSON.stringify({connector_id:config.connector_id,...data}),signal:AbortSignal.timeout(15000),redirect:'error'});
     const result=await response.json();if(!response.ok)throw new Error(`Installation API HTTP ${response.status}: ${result.error||'Request failed'}`);return result;
   };
   const getControls=async()=>{
-    const response=await fetch(new URL('/api/connectors/control',api),{headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(10000),redirect:'error'});
+    const response=await fetch(controlUrl(api,config.connector_id),{headers:{authorization:`Bearer ${token}`,'x-connector-instance':instance},signal:AbortSignal.timeout(10000),redirect:'error'});
     if(!response.ok)throw new Error('无法读取设备控制策略，未执行安装。');
     return validateControls(await response.json(),config.connector_id);
   };
@@ -100,8 +102,9 @@ export async function main() {
   for(const item of Object.values(journal))if(!item.result)item.result={status:'unknown',message:'安装器在执行中退出，请检查手机；不会自动重试。'};
   let saving=Promise.resolve();
   const save=()=>{saving=saving.then(async()=>{await writeFile(statePath+'.tmp',JSON.stringify(journal),{mode:0o600});await rename(statePath+'.tmp',statePath);});return saving;};
-  const roots=[resolve(here,'../../../..'),resolve(here,'../../../work/apks')];
-  await mkdir(roots[1],{recursive:true});
+  if(config.apk_roots&&(!Array.isArray(config.apk_roots)||!config.apk_roots.length||config.apk_roots.length>5||config.apk_roots.some(p=>typeof p!=='string'||!p)))throw new Error('Invalid APK directories');
+  const roots=config.apk_roots?config.apk_roots.map(p=>resolve(dirname(configPath),p)):[resolve(here,'../../../..'),resolve(here,'../../../work/apks')];
+  for(const root of roots)await mkdir(root,{recursive:true});
   const cache=new Map(),running=new Map();let packages=new Map(),lastCatalog=0;
   console.log(`APK installer ${config.connector_id}: ${api.origin}`);
   try {

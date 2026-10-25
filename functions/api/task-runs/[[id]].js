@@ -4,7 +4,7 @@ import { controlAccess } from '../_installations.js';
 import { decodeRun,runSelect,smallBody,expireTaskRuns } from '../_tasks.js';
 
 export async function onRequestGet({env,request,params}){
-  await expireTaskRuns(env.DB,env.DEVICE_CONNECTOR_ID||'local-adb');
+  for(const c of (await env.DB.prepare('SELECT id FROM device_connectors').all()).results)await expireTaskRuns(env.DB,c.id);
   const runId=routeId(params),query=new URL(request.url).searchParams;
   const task=query.get('task_id'),account=query.get('account_id');
   const rows=(await env.DB.prepare(runSelect+(runId?' WHERE r.id=?':task?' WHERE r.task_id=?':account?' WHERE r.account_id=?':'')+' ORDER BY r.created_at DESC,r.id DESC LIMIT 200').bind(...(runId?[runId]:task?[task]:account?[account]:[])).all()).results.map(decodeRun);
@@ -24,7 +24,8 @@ export async function onRequestPost({env,request}){
   if(!account)return json({error:'所选账号未在此设备确认登录；请先完成手工登录并绑定。'},409);
   await expireTaskRuns(env.DB,device.connector_id);
   const worker=await env.DB.prepare('SELECT last_seen_at FROM task_workers WHERE connector_id=?').bind(device.connector_id).first();
-  if(!worker||Date.now()-Date.parse(worker.last_seen_at)>90000)return json({error:'本机任务执行器未在线，请先启动执行器。'},409);
+  const computer=await env.DB.prepare('SELECT enabled FROM device_connectors WHERE id=?').bind(device.connector_id).first();
+  if(!worker||!computer?.enabled||Date.now()-Date.parse(worker.last_seen_at)>90000)return json({error:'设备所属电脑未启用或任务执行器未在线，请先启动执行器。'},409);
   const now=new Date().toISOString();
   const snapshot={name:task.name,note_url:task.note_url,expected_title:task.expected_title,expected_author:task.expected_author,actions:JSON.parse(task.actions)};
   try{
@@ -32,7 +33,7 @@ export async function onRequestPost({env,request}){
       env.DB.prepare(`INSERT INTO task_runs(id,task_id,device_id,account_id,connector_id,snapshot,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',?,?)`).bind(data.request_id,task.id,device.id,account.id,device.connector_id,JSON.stringify(snapshot),now,now),
       ...snapshot.actions.map(a=>env.DB.prepare('INSERT INTO task_run_actions(run_id,action)VALUES(?,?)').bind(data.request_id,a))
     ]);
-  }catch(error){if(/UNIQUE|constraint|device has/i.test(error.message))return json({error:'设备或账号已有待执行任务，或设备正在安装 APK，请稍后再试。'},409);throw error;}
+  }catch(error){if(/UNIQUE|constraint|device has|device owner/i.test(error.message))return json({error:'设备或账号已有待执行任务、设备正在安装 APK 或设备归属已改变，请刷新后重试。'},409);throw error;}
   return json({id:data.request_id,status:'queued'},201);
 }
 export async function onRequestPatch({env,request,params}){
