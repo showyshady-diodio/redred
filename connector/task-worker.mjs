@@ -57,6 +57,7 @@ export async function main(){
           journal={task,output};await save();await mkdir(output,{recursive:true});
           const snapshot=task.snapshot;
           const childArgs=[resolve(here,'rednote-appium.mjs'),'--config',configPath,'--url',snapshot.note_url,'--device-id',task.device_id,'--account-id',task.account_id,'--task-run-id',task.id,'--output-dir',output];
+          childArgs.push('--lease-file',statePath);
           if(snapshot.expected_title)childArgs.push('--title',snapshot.expected_title);
           if(snapshot.expected_author)childArgs.push('--author',snapshot.expected_author);
           childArgs.push(...snapshot.actions.map(a=>'--'+a));

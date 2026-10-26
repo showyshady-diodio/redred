@@ -18,7 +18,7 @@ export async function onRequestPost({env,request}){
     const task=await env.DB.prepare(`UPDATE task_runs SET status='running',lease_token=?,started_at=?,updated_at=? WHERE id=(
       SELECT r.id FROM task_runs r JOIN devices d ON d.id=r.device_id JOIN work_accounts a ON a.id=r.account_id
       WHERE r.connector_id=? AND d.connector_id=r.connector_id AND r.status='queued' AND d.connection_mode='active' AND d.status='available' AND d.adb_state='device' AND d.last_seen_at>?
-      AND a.status='active' AND EXISTS(SELECT 1 FROM account_device_sessions s WHERE s.device_id=r.device_id AND s.account_id=r.account_id AND s.status='active')
+      AND a.status='active' AND (EXISTS(SELECT 1 FROM account_device_sessions s WHERE s.device_id=r.device_id AND s.account_id=r.account_id AND s.status='active') OR EXISTS(SELECT 1 FROM device_account_members m WHERE m.device_id=r.device_id AND m.account_id=r.account_id AND m.xhs_number=json_extract(r.snapshot,'$.xhs_number')))
       AND NOT EXISTS(SELECT 1 FROM task_runs busy WHERE busy.connector_id=r.connector_id AND busy.status='running')
       AND NOT EXISTS(SELECT 1 FROM apk_installations i WHERE i.device_id=r.device_id AND i.status IN ('queued','running'))
       ORDER BY r.created_at,r.id LIMIT 1) AND status='queued' RETURNING *`).bind(id(),now,now,connectorId,new Date(Date.now()-90000).toISOString()).first();

@@ -24,6 +24,8 @@ export async function onRequestPost({ request, env }) {
     env.DB.prepare("SELECT * FROM devices WHERE id = ?").bind(data.device_id).first(),
   ]);
   if (!account || !device) return json({ error: "Account or device not found" }, 404);
+  const fixed=await env.DB.prepare('SELECT device_id FROM device_account_members WHERE account_id=?').bind(account.id).first();
+  if(fixed&&fixed.device_id!==device.id)return json({error:'该账号已固定到其他设备，请使用所属设备。'},409);
   if(!['active','verification_needed'].includes(account.status))return json({error:'该工作账号已暂停或停用。'},409);
   if(device.status!=='available'||device.connection_mode!=='active'||effectiveDevice(device).connection_status!=='online')return json({error:'请先恢复设备连接，确认设备在线且可用。'},409);
   const sessionId = id();

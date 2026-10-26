@@ -20,20 +20,22 @@ export async function onRequestPost({env,request}){
   if(!task)return json({error:'Task not found'},404);
   const device=effectiveDevice(await env.DB.prepare('SELECT * FROM devices WHERE id=?').bind(data.device_id).first());
   if(!device||device.status!=='available'||device.connection_status!=='online'||device.connection_mode!=='active'||!device.connector_id)return json({error:'请选择在线、可用且未暂停的设备。'},409);
-  const account=await env.DB.prepare(`SELECT a.id FROM work_accounts a JOIN account_device_sessions s ON s.account_id=a.id WHERE a.id=? AND a.status='active' AND s.device_id=? AND s.status='active' LIMIT 1`).bind(data.account_id,device.id).first();
+  const account=await env.DB.prepare(`SELECT a.id,m.xhs_number FROM work_accounts a LEFT JOIN device_account_members m ON m.account_id=a.id AND m.device_id=? WHERE a.id=? AND a.status='active' AND (m.account_id IS NOT NULL OR EXISTS(SELECT 1 FROM account_device_sessions s WHERE s.account_id=a.id AND s.device_id=? AND s.status='active')) LIMIT 1`).bind(device.id,data.account_id,device.id).first();
   if(!account)return json({error:'所选账号未在此设备确认登录；请先完成手工登录并绑定。'},409);
+  const fixed=await env.DB.prepare('SELECT device_id FROM device_account_members WHERE account_id=?').bind(account.id).first();
+  if(fixed&&fixed.device_id!==device.id)return json({error:'该账号已固定到其他设备。'},409);
   await expireTaskRuns(env.DB,device.connector_id);
   const worker=await env.DB.prepare('SELECT last_seen_at FROM task_workers WHERE connector_id=?').bind(device.connector_id).first();
   const computer=await env.DB.prepare('SELECT enabled FROM device_connectors WHERE id=?').bind(device.connector_id).first();
   if(!worker||!computer?.enabled||Date.now()-Date.parse(worker.last_seen_at)>90000)return json({error:'设备所属电脑未启用或任务执行器未在线，请先启动执行器。'},409);
   const now=new Date().toISOString();
-  const snapshot={name:task.name,note_url:task.note_url,expected_title:task.expected_title,expected_author:task.expected_author,actions:JSON.parse(task.actions)};
+  const snapshot={name:task.name,note_url:task.note_url,expected_title:task.expected_title,expected_author:task.expected_author,actions:JSON.parse(task.actions),...(account.xhs_number?{xhs_number:account.xhs_number}:{})};
   try{
     await env.DB.batch([
       env.DB.prepare(`INSERT INTO task_runs(id,task_id,device_id,account_id,connector_id,snapshot,status,created_at,updated_at) VALUES(?,?,?,?,?,?,'queued',?,?)`).bind(data.request_id,task.id,device.id,account.id,device.connector_id,JSON.stringify(snapshot),now,now),
       ...snapshot.actions.map(a=>env.DB.prepare('INSERT INTO task_run_actions(run_id,action)VALUES(?,?)').bind(data.request_id,a))
     ]);
-  }catch(error){if(/UNIQUE|constraint|device has|device owner/i.test(error.message))return json({error:'设备或账号已有待执行任务、设备正在安装 APK 或设备归属已改变，请刷新后重试。'},409);throw error;}
+  }catch(error){if(/UNIQUE|constraint|device has|device owner|device account group/i.test(error.message))return json({error:'设备或账号已有待执行任务、设备正在安装 APK 或设备归属已改变，请刷新后重试。'},409);throw error;}
   return json({id:data.request_id,status:'queued'},201);
 }
 export async function onRequestPatch({env,request,params}){

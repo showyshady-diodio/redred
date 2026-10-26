@@ -5,6 +5,7 @@ import {resolve,dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {configureNetwork,parseDevices,deviceRef,validateControls} from './adb-connector.mjs';
 import {workstationInstance,controlUrl,adbExecutable} from './workstation.mjs';
+import {switchAccount} from './rednote-account-switch.mjs';
 
 const here=dirname(fileURLToPath(import.meta.url)),exec=promisify(execFile);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -170,13 +171,14 @@ export async function main(){
   const api=new URL(config.api_url);if(api.protocol!=='https:'&&!['localhost','127.0.0.1'].includes(api.hostname))throw new Error('Invalid API URL');
   const base=config.appium_url?.replace(/\/$/,'');if(!base||!['localhost','127.0.0.1'].includes(new URL(base).hostname))throw new Error('Configure local Appium URL first');
   const get=async path=>{const r=await fetch(new URL('/api/'+path,api),{signal:AbortSignal.timeout(15000)});if(!r.ok)throw new Error(`Backend HTTP ${r.status}`);return r.json();};
-  const [devices,accounts,sessions]=await Promise.all([get('devices'),get('accounts'),get('sessions')]);
+  const [devices,accounts,sessions,members]=await Promise.all([get('devices'),get('accounts'),get('sessions'),get('device-accounts')]);
   const candidates=devices.filter(d=>d.connector_id===(config.connector_id||'local-adb'));
   const device=option('--device-id')?candidates.find(d=>d.id===option('--device-id')):candidates.length===1?candidates[0]:null;
   const account=option('--account-id')?accounts.find(a=>a.id===option('--account-id')):accounts.length===1?accounts[0]:null;
   if(!device||!account)throw new Error('Specify an unambiguous device and account ID');
   if(device.connection_mode!=='active'||device.connection_status!=='online'||device.status!=='available'||account.status!=='active')throw new Error('The chosen device/account is not ready');
-  if(!sessions.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Confirm the selected account login on the backend before testing');
+  const membership=members.find(m=>m.device_id===device.id&&m.account_id===account.id);
+  if(!membership&&!sessions.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Confirm the selected account login on the backend before testing');
   const installs=await get(`installations?device_id=${encodeURIComponent(device.id)}`);
   if(installs.some(j=>['queued','running'].includes(j.status)))throw new Error('The device has an installation task; wait before testing');
   const adbPath=adbExecutable(configPath,config.adb_path||'../../../work/android-sdk/platform-tools/adb.exe');
@@ -216,11 +218,12 @@ export async function main(){
       throw new Error(`The expected note did not appear within 30 seconds: ${lastError||'page unavailable'}`);
     };
     const checkReady=async()=>{
-      const [current,logins,allAccounts]=await Promise.all([get(`devices/${device.id}`),get('sessions'),get('accounts')]);
-      if(current.connector_id!==device.connector_id||current.connection_status!=='online'||current.connection_mode!=='active'||current.status!=='available'||!allAccounts.some(a=>a.id===account.id&&a.status==='active')||!logins.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active'))throw new Error('Device/account policy or login binding changed; no action performed');
+      const [current,logins,allAccounts,group]=await Promise.all([get(`devices/${device.id}`),get('sessions'),get('accounts'),get('device-accounts')]);
+      const bindingValid=membership?group.some(m=>m.device_id===device.id&&m.account_id===account.id&&m.xhs_number===membership.xhs_number):logins.some(s=>s.device_id===device.id&&s.account_id===account.id&&s.status==='active');
+      if(current.connector_id!==device.connector_id||current.connection_status!=='online'||current.connection_mode!=='active'||current.status!=='available'||!allAccounts.some(a=>a.id===account.id&&a.status==='active')||!bindingValid)throw new Error('Device/account policy or login binding changed; no action performed');
       if(option('--task-run-id')){
         const run=await get('task-runs/'+encodeURIComponent(option('--task-run-id')));
-        if(run.status!=='running'||run.device_id!==device.id||run.account_id!==account.id)throw new Error('Task execution lease is no longer active');
+        if(run.status!=='running'||run.device_id!==device.id||run.account_id!==account.id||(membership&&run.snapshot.xhs_number!==membership.xhs_number))throw new Error('Task execution lease is no longer active');
       }
     };
     const settleCollection=async()=>{
@@ -237,6 +240,15 @@ export async function main(){
       throw new Error('Collection overlay did not disappear; no next action performed');
     };
     await checkReady();
+    if(membership){
+      report.account_identity=await switchAccount({call:(p,m,d)=>appiumCall(base,p,m,d),path,number:membership.xhs_number,checkReady});
+      await checkpoint();
+      if(option('--task-run-id')){
+        const lease=JSON.parse(await readFile(option('--lease-file'),'utf8'));
+        const confirmed=await fetch(new URL('/api/connectors/account-confirm',api),{method:'POST',headers:{authorization:`Bearer ${process.env.DEVICE_CONNECTOR_TOKEN||config.token}`,'content-type':'application/json','x-connector-instance':instance},body:JSON.stringify({connector_id:config.connector_id||'local-adb',run_id:option('--task-run-id'),lease_token:lease.task.lease_token,xhs_number:report.account_identity.xhs_number}),signal:AbortSignal.timeout(15000)});
+        if(!confirmed.ok)throw new Error('后台未接受实际账号核验，任务已停止。');
+      }
+    }
     await appiumCall(base,path+'/execute/sync','POST',{script:'mobile: deepLink',args:[{url:note.url,package:'com.xingin.xhs'}]});
     await settleCollection();
     report.navigation.push({step:'open_shared_note',note_id:note.id});

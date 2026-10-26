@@ -7,6 +7,8 @@ import { onRequestPost as enqueue,onRequestGet as runs,onRequestPatch as cancel 
 import { onRequestPost as connector } from '../functions/api/connectors/tasks.js';
 import { onRequestGet as accounts } from '../functions/api/accounts/[[id]].js';
 import { executionResult } from '../connector/task-worker.mjs';
+import {onRequestPost as groupSave} from '../functions/api/device-accounts.js';
+import {onRequestPost as confirmIdentity} from '../functions/api/connectors/account-confirm.js';
 
 const secret='test-task-secret-012345678901234567890';
 function request(data,agent=false,token=secret){return new Request('https://example.test/api/tasks',{method:'POST',headers:{'content-type':'application/json',...(agent?{authorization:'Bearer '+token}:{'x-device-control-token':token})},body:JSON.stringify(agent?{connector_id:'local-adb',...data}:data)});}
@@ -24,6 +26,28 @@ async function fixture(){
   const queue=async(extra={})=>{const payload={request_id:crypto.randomUUID(),task_id:taskId,account_id:'account',device_id:'phone',...extra};return {payload,response:await enqueue({env,request:request(payload)})};};
   return {db,env,data,taskId,agent,queue};
 }
+
+test('fixed groups dispatch a saved account without claiming it is current; verified identity replaces the current session',async()=>{
+  const {db,env,agent,queue}=await fixture();
+  try{
+    const value={account_id:'other',device_id:'phone',xhs_number:'saved-other',saved_login_confirmed:true};
+    assert.equal((await groupSave({env,request:request(value,false,'bad')})).status,401);
+    assert.equal((await groupSave({env,request:request({...value,saved_login_confirmed:false})})).status,400);
+    assert.equal((await groupSave({env,request:request(value)})).status,200);
+    assert.equal(db.prepare("SELECT account_id FROM account_device_sessions WHERE status='active'").get().account_id,'account');
+    await agent({action:'heartbeat'});
+    const {response}=await queue({account_id:'other'});assert.equal(response.status,201);
+    assert.equal((await groupSave({env,request:request({...value,action:'remove'})})).status,409);
+    const task=(await(await agent({action:'claim'})).json()).task;
+    assert.equal(task.snapshot.xhs_number,'saved-other');
+    const proof={run_id:task.id,lease_token:task.lease_token,xhs_number:'wrong'};
+    assert.equal((await confirmIdentity({env,request:request(proof,true)})).status,409);
+    assert.equal((await confirmIdentity({env,request:request({...proof,xhs_number:'saved-other'},true)})).status,200);
+    assert.equal(db.prepare("SELECT account_id FROM account_device_sessions WHERE status='active'").get().account_id,'other');
+    assert.equal((await confirmIdentity({env,request:request({...proof,xhs_number:'saved-other'},true)})).status,200);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM account_device_sessions WHERE status='active'").get().n,1);
+  }finally{db.close();}
+});
 
 test('task dispatch requires authorization, an online worker and the selected account login; snapshots and cancellation are immutable',async()=>{
   const {db,env,data,taskId,agent,queue}=await fixture();

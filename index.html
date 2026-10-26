@@ -64,6 +64,7 @@
   <dialog id="taskDetailsDialog"><div class="form"><div class="bar"><h2 id="taskDetailsTitle">执行明细</h2><button type="button" class="secondary" id="refreshTaskDetails">刷新明细</button></div><div id="taskMetadata" class="notice"></div><div id="taskTotals" class="task-summary"></div><div class="sub" style="margin-bottom:12px">最近 200 条执行明细；统计包含全部明细。已完成 = 操作前已处于目标状态，本次跳过，不增加动作数。</div><div class="table-wrap"><table><thead><tr><th>时间 / 任务</th><th>设备 / 工作账号</th><th>状态</th><th>点赞</th><th>收藏</th><th>关注</th><th>结果说明</th></tr></thead><tbody id="taskRunRows"></tbody></table></div><div class="danger" id="taskDetailsError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="taskDetailsDialog">关闭</button></div></div></dialog>
   <dialog id="computerDialog"><form class="form" id="computerForm"><h2>接入测试电脑</h2><div class="fields"><label>电脑名称<input id="computerName" maxlength="100" required placeholder="如：朋友的测试电脑"></label><label>设备控制码<input id="computerCode" type="password" maxlength="256" autocomplete="off" placeholder="本标签页已授权时可留空"></label></div><div class="notice">生成独立连接器编号，共享本项目连接令牌。配置不包含 Cloudflare 登录授权。请把配置交给对应测试电脑，不要复制主电脑的运行状态目录。</div><div class="notice" id="computerResult" hidden></div><div class="danger" id="computerError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="computerDialog">关闭</button><button type="button" class="secondary" id="downloadComputerConfig" hidden>下载配置</button><button class="primary" id="createComputer">生成并下载配置</button></div></form></dialog>
   <dialog id="transferDialog"><form class="form" id="transferForm"><h2 id="transferTitle">转移设备到其他电脑</h2><div class="fields"><label>目标电脑<select id="transferComputer" required></select></label><label>设备控制码<input id="transferCode" type="password" maxlength="256" autocomplete="off" placeholder="本标签页已授权时可留空"></label></div><div class="notice">设备和账号登录记录保留。转移后等待目标电脑发现手机；原电脑不再领取此设备任务。有排队、执行或安装任务时不能转移。请先让旧电脑断开这台手机，再在目标电脑配对连接。</div><div class="danger" id="transferError" role="alert"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="transferDialog">取消</button><button class="primary" id="submitTransfer">确认转移</button></div></form></dialog>
+  <dialog id="accountGroupDialog"><form class="form" id="accountGroupForm"><h2 id="accountGroupTitle">设备固定账号组</h2><div id="accountGroupMembers"></div><div class="fields"><label>工作账号<select id="groupAccount" required></select></label><label>小红书号<input id="groupXhsNumber" required maxlength="64" placeholder="个人页的小红书号，不是手机号或昵称"></label><label>设备控制码<input id="groupCode" type="password" autocomplete="off" placeholder="本标签页已授权时可留空"></label></div><label><input id="groupSaved" type="checkbox" required>已在此手机登录，并在切换账号列表中保留该账号</label><div class="notice">每台设备对应一个固定账号组，每个账号固定到一台设备。组内账号不代表同时在线；执行任务时自动切换并读取个人页核验小红书号，要求验证码时停止。手机须解锁并保持亮屏。</div><div class="danger" id="accountGroupError"></div><div class="form-actions"><button type="button" class="secondary" data-close-dialog="accountGroupDialog">关闭</button><button class="primary" id="saveGroupAccount">保存组内账号</button></div></form></dialog>
   <script type="module">
     const labels = { active:"正常", paused:"已暂停", pausing:"暂停中", resuming:"恢复中", verification_needed:"需验证", disabled:"停用", available:"可用", maintenance:"维护中", ended:"已结束", unpaired:"未接入", online:"在线", offline:"离线", attention:"需检查" };
     const state = { view:['accounts','devices','sessions','tasks'].includes(location.hash.slice(1))?location.hash.slice(1):'accounts', accounts:[], devices:[], sessions:[], tasks:[], connectors:[], configured:false, loadError:false, loadedAt:null };
@@ -80,8 +81,8 @@
       if(refreshing||document.querySelector('.row-menu:popover-open'))return;
       refreshing=true; $("#refreshButton").disabled=true;
       try {
-        const [accounts,devices,sessions,connection,tasks] = await Promise.all([api("accounts"),api("devices"),api("sessions"),api("connectors"),api('tasks')]);
-        Object.assign(state,{accounts,devices,sessions,tasks,connectors:connection.connectors,configured:connection.configured,loadedAt:new Date()});
+        const [accounts,devices,sessions,connection,tasks,members] = await Promise.all([api("accounts"),api("devices"),api("sessions"),api("connectors"),api('tasks'),api('device-accounts')]);
+        Object.assign(state,{accounts,devices,sessions,tasks,members,connectors:connection.connectors,configured:connection.configured,loadedAt:new Date()});
         state.loadError=false;
         render();
       } catch (e) {
@@ -119,7 +120,7 @@
     function deviceRow(x) {
       let controls=x.connector_id&&x.connection_type==='wireless'?` <button class="secondary" data-device-control="${safe(x.id)}" data-connection-action="${x.connection_mode==='paused'?'resume':'pause'}">${x.connection_mode==='paused'?'恢复连接':'暂停连接'}</button>`:'';
       const install=x.connector_id?` <button class="secondary" data-install-device="${safe(x.id)}">安装 APK</button>`:'';
-      controls+=install+` <button class="secondary" data-login-device="${safe(x.id)}">账号登录</button>`+(x.connector_id?` <button class="secondary" data-transfer-device="${safe(x.id)}">转移电脑</button>`:'');
+      controls+=install+` <button class="secondary" data-group-device="${safe(x.id)}">固定账号组（${(state.members||[]).filter(m=>m.device_id===x.id).length}）</button> <button class="secondary" data-login-device="${safe(x.id)}">确认当前账号</button>`+(x.connector_id?` <button class="secondary" data-transfer-device="${safe(x.id)}">转移电脑</button>`:'');
       const detail=x.control_error?`<div class="sub danger">${safe(x.control_error)}</div>`:['pausing','resuming'].includes(x.connection_status)?'<div class="sub">等待连接器执行</div>':'';
       return `<tr><td>${safe(x.name)}<div class="sub">${x.connector_id?safe(x.agent_name):'手动登记'}</div></td><td>${safe([x.manufacturer,x.model].filter(Boolean).join(' / '))||'—'}</td><td>${safe([x.os,x.os_version].filter(Boolean).join(' '))||'—'}<div class="sub">${safe(x.screen_resolution)||'—'}</div></td><td>${pill(x.connection_status||'unpaired')}<div class="sub">${safe({usb:'USB',wireless:'无线',emulator:'模拟器'}[x.connection_type]||'')}</div>${detail}</td><td>${date(x.last_seen_at)}</td><td>${x.battery_percent==null?'—':`${safe(x.battery_percent)}%`}<div class="sub">${x.charging===1?'充电中':''}</div></td><td>${pill(x.status)}</td><td>${rowActions(`<button class="secondary" data-device-detail="${safe(x.id)}">详情</button>`,`<button class="secondary" data-edit-device="${safe(x.id)}">编辑设备</button>${controls}`,`device-${x.id}`,x.name)}</td></tr>`;
     }
@@ -154,7 +155,7 @@
       else if(state.view==="accounts") { $("#formTitle").textContent="添加工作账号"; select("国家 / 地区号","phone_country_code",[["+86","中国大陆 +86"],["+852","中国香港 +852"],["+853","中国澳门 +853"],["+886","中国台湾 +886"],["+1","美国 / 加拿大 +1"],["+44","英国 +44"],["+61","澳大利亚 +61"],["+81","日本 +81"],["+82","韩国 +82"],["+65","新加坡 +65"],["+60","马来西亚 +60"],["+other","其他 / 自定义"]]); fields.insertAdjacentHTML("beforeend","<label id='customCodeLabel' hidden>自定义国家 / 地区号<input name='custom_country_code' placeholder='+33'></label>"); add("手机号","phone_number","输入号码，不做格式正则校验","tel",true); add("显示名称","display_name"); add("备注","notes"); }
       if(state.view==="devices") { $("#formTitle").textContent=device?"编辑设备":"手动登记设备"; add("设备名称","name","如：工作机 01","text",true); if(device){select("设备状态","status",[['available','可用'],['maintenance','维护中'],['disabled','停用']]);}else{add("设备厂商","manufacturer"); add("型号","model"); add("系统","os","如：Android"); add("系统版本","os_version");} add("备注","notes"); if(device){for(const field of ['name','notes','status'])fields.querySelector(`[name='${field}']`).value=device[field]||'';}else{fields.insertAdjacentHTML("beforeend","<div class='notice'>连接器发现的新设备会自动建档，此处用于登记尚未接入的设备。</div>");} }
       if(state.view==="sessions") {
-        $("#formTitle").textContent="指定账号手工登录";
+        $("#formTitle").textContent="人工确认当前登录账号";
         select("工作账号","account_id",state.accounts.filter(x=>['active','verification_needed'].includes(x.status)).map(x=>[x.id,[x.display_name,x.phone_country_code,x.phone_number].filter(Boolean).join(' ')]));
         select("目标设备","device_id",state.devices.filter(x=>x.status==='available'&&x.connection_mode==='active'&&x.connection_status==='online').map(x=>[x.id,x.name]));
         fields.insertAdjacentHTML('beforeend',`<div class="notice" id="loginGuide"></div><label style="display:flex;align-items:flex-start;gap:8px"><input name="login_confirmed" type="checkbox" required style="margin-top:3px">我已在选定手机完成登录，并核对当前登录账号与所选工作账号一致。</label>`);
@@ -182,6 +183,20 @@
     let pendingControl=null,controlCode='';
     try{controlCode=sessionStorage.getItem('deviceControlCode')||'';}catch{}
     function saveControlCode(value){controlCode=value;try{if(value)sessionStorage.setItem('deviceControlCode',value);else sessionStorage.removeItem('deviceControlCode');}catch{}}
+    let groupDeviceId=null;
+    function renderAccountGroup(){
+      const members=(state.members||[]).filter(m=>m.device_id===groupDeviceId);
+      $('#accountGroupMembers').innerHTML=members.length?members.map(m=>`<p>${safe(m.display_name)} · ${safe(m.xhs_number)} <button type="button" class="secondary" data-remove-member="${safe(m.account_id)}">移出组</button></p>`).join(''):'<p>此设备尚未配置固定账号。</p>';
+      $('#groupAccount').innerHTML=state.accounts.filter(a=>a.status==='active'&&!(state.members||[]).some(m=>m.account_id===a.id&&m.device_id!==groupDeviceId)).map(a=>`<option value="${safe(a.id)}">${safe(a.display_name||a.phone_number)} · ${safe(a.phone_number)}</option>`).join('');
+      updateGroupNumber();
+    }
+    function updateGroupNumber(){const member=(state.members||[]).find(m=>m.account_id===$('#groupAccount').value&&m.device_id===groupDeviceId);$('#groupXhsNumber').value=member?.xhs_number||'';$('#groupSaved').checked=false;}
+    $('#groupAccount').addEventListener('change',updateGroupNumber);
+    $('#rows').addEventListener('click',e=>{const b=e.target.closest('[data-group-device]');if(!b)return;groupDeviceId=b.dataset.groupDevice;$('#accountGroupTitle').textContent=(state.devices.find(d=>d.id===groupDeviceId)?.name||'设备')+' · 固定账号组';$('#accountGroupForm').reset();$('#accountGroupError').textContent='';renderAccountGroup();$('#accountGroupDialog').showModal();});
+    async function saveGroup(data){const code=$('#groupCode').value.trim()||controlCode;await api('device-accounts',{method:'POST',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify({device_id:groupDeviceId,...data})});saveControlCode(code);await refresh();renderAccountGroup();}
+    $('#accountGroupForm').addEventListener('submit',async e=>{e.preventDefault();$('#saveGroupAccount').disabled=true;$('#accountGroupError').textContent='';try{await saveGroup({account_id:$('#groupAccount').value,xhs_number:$('#groupXhsNumber').value.trim(),saved_login_confirmed:$('#groupSaved').checked});}catch(error){if(error.status===401)saveControlCode('');$('#accountGroupError').textContent=error.message;}finally{$('#saveGroupAccount').disabled=false;}});
+    $('#accountGroupMembers').addEventListener('click',async e=>{const b=e.target.closest('[data-remove-member]');if(!b)return;b.disabled=true;try{await saveGroup({account_id:b.dataset.removeMember,action:'remove'});}catch(error){$('#accountGroupError').textContent=error.message;}finally{b.disabled=false;}});
+    $('#accountGroupDialog').addEventListener('close',()=>{$('#groupCode').value='';groupDeviceId=null;});
     function authorizeControl(control,message=''){pendingControl=control;$('#controlDialog h2').textContent=control.kind==='sessions'?'授权登录记录操作':control.kind==='computer'?'电脑接入管理':'授权设备连接管理';$('#controlDialog .notice').textContent=control.kind==='sessions'?'此操作会更新人工确认的登录记录，不会替你退出或切换手机上的账号。':control.kind==='computer'?'停用后此电脑不能继续采集或领取任务；已有排队或执行任务时，需先完成或取消。共享连接令牌不变，此操作不会影响其他电脑。':'暂停和恢复会改变手机与电脑的连接。输入本机保存的设备控制码后，本标签页可继续操作。';$("#controlCode").value='';$("#controlError").textContent=message;$("#controlDialog").showModal();}
     async function sendControl(control,code){await api(control.kind==='computer'?'connectors/manage':`${control.kind==='sessions'?'sessions':'devices'}/${control.id}`,{method:control.kind==='computer'?'POST':'PATCH',headers:{'content-type':'application/json','x-device-control-token':code},body:JSON.stringify(control.kind==='computer'?{connector_id:control.id,enabled:control.action}:control.kind==='sessions'?{status:control.action}:{connection_action:control.action})});await refresh();}
     $("#rows").addEventListener('click',async e=>{
@@ -292,15 +307,16 @@
     });
     function updateExecutionAccount(){
       const previous=$('#runAccount').value,deviceId=$('#runDevice').value;
-      const accounts=state.accounts.filter(a=>a.status==='active'&&state.sessions.some(s=>s.account_id===a.id&&s.device_id===deviceId&&s.status==='active'));
+      const accounts=state.accounts.filter(a=>a.status==='active'&&((state.members||[]).some(m=>m.account_id===a.id&&m.device_id===deviceId)||state.sessions.some(s=>s.account_id===a.id&&s.device_id===deviceId&&s.status==='active')));
       $('#runAccount').innerHTML=accounts.length?accounts.map(a=>`<option value="${safe(a.id)}">${safe(a.display_name||a.phone_number)} · ${safe(a.phone_country_code)} ${safe(a.phone_number)}</option>`).join(''):'<option value="">此设备尚无已确认登录的工作账号</option>';
       if(accounts.some(a=>a.id===previous))$('#runAccount').value=previous;
       const device=state.devices.find(d=>d.id===deviceId),worker=state.connectors.find(c=>c.id===device?.connector_id);
-      $('#runGuide').textContent=!device?'当前没有在线、可用且未暂停的设备。':!worker?.task_worker_online?'本机任务执行器未在线，暂不可执行。':!accounts.length?'请先在此手机登录目标账号，并在后台确认账号登录。':`直接打开分享链接并核对目标，执行${executionTask.actions.map(a=>actionLabels[a]).join('、')}。请先解锁手机并保持亮屏；不会自动切换账号。已有目标状态会跳过，不重复计数。`;
+      const grouped=(state.members||[]).some(m=>m.account_id===$('#runAccount').value&&m.device_id===deviceId);
+      $('#runGuide').textContent=!device?'当前没有在线、可用且未暂停的设备。':!worker?.task_worker_online?'本机任务执行器未在线，暂不可执行。':!accounts.length?'请先配置设备固定账号组，或人工确认当前登录账号。':`${grouped?'自动切换到指定账号并读取个人页核对小红书号，然后':'使用人工确认的当前账号，'}打开分享链接并核对目标，执行${executionTask.actions.map(a=>actionLabels[a]).join('、')}。请解锁并保持亮屏；出现验证或账号不符时停止。已有目标状态会跳过，不重复计数。`;
       $('#submitRun').disabled=!device||!accounts.length||!worker?.task_worker_online;
       executionRequest=null;
     }
-    $('#runDevice').addEventListener('change',updateExecutionAccount);$('#runAccount').addEventListener('change',()=>{executionRequest=null;});
+    $('#runDevice').addEventListener('change',updateExecutionAccount);$('#runAccount').addEventListener('change',()=>{executionRequest=null;updateExecutionAccount();});
     function openExecution(task){
       executionTask=task;executionRequest=null;$('#runTitle').textContent='执行任务 · '+task.name;$('#runError').textContent='';$('#runCode').value='';
       const available=state.devices.filter(d=>d.status==='available'&&d.connection_mode==='active'&&d.connection_status==='online');
