@@ -200,3 +200,29 @@ BEGIN SELECT RAISE(ABORT,'device account group busy'); END;
 CREATE TRIGGER IF NOT EXISTS task_fixed_account_guard BEFORE INSERT ON task_runs
 WHEN EXISTS(SELECT 1 FROM device_account_members WHERE account_id=NEW.account_id AND (device_id<>NEW.device_id OR xhs_number<>COALESCE(json_extract(NEW.snapshot,'$.xhs_number'),'')))
 BEGIN SELECT RAISE(ABORT,'device account group mismatch'); END;
+CREATE TABLE IF NOT EXISTS account_groups (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS account_login_identities (
+  account_id TEXT PRIMARY KEY REFERENCES work_accounts(id),
+  xhs_number TEXT NOT NULL COLLATE NOCASE UNIQUE
+);
+CREATE TABLE IF NOT EXISTS account_group_members (
+  account_id TEXT PRIMARY KEY REFERENCES work_accounts(id),
+  group_id TEXT NOT NULL REFERENCES account_groups(id)
+);
+CREATE INDEX IF NOT EXISTS idx_account_group_members_group ON account_group_members(group_id);
+CREATE TABLE IF NOT EXISTS device_account_bindings (
+  device_id TEXT PRIMARY KEY REFERENCES devices(id),
+  group_id TEXT UNIQUE REFERENCES account_groups(id),
+  account_id TEXT UNIQUE REFERENCES work_accounts(id),
+  CHECK ((group_id IS NOT NULL AND account_id IS NULL) OR (group_id IS NULL AND account_id IS NOT NULL))
+);
+CREATE TRIGGER IF NOT EXISTS account_binding_busy_insert BEFORE INSERT ON device_account_bindings
+WHEN EXISTS(SELECT 1 FROM task_runs WHERE device_id=NEW.device_id AND status IN ('queued','running'))
+BEGIN SELECT RAISE(ABORT,'device account group busy'); END;
+CREATE TRIGGER IF NOT EXISTS account_binding_busy_delete BEFORE DELETE ON device_account_bindings
+WHEN EXISTS(SELECT 1 FROM task_runs WHERE device_id=OLD.device_id AND status IN ('queued','running'))
+BEGIN SELECT RAISE(ABORT,'device account group busy'); END;

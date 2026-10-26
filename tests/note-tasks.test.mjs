@@ -7,7 +7,7 @@ import { onRequestPost as enqueue,onRequestGet as runs,onRequestPatch as cancel 
 import { onRequestPost as connector } from '../functions/api/connectors/tasks.js';
 import { onRequestGet as accounts } from '../functions/api/accounts/[[id]].js';
 import { executionResult } from '../connector/task-worker.mjs';
-import {onRequestPost as groupSave} from '../functions/api/device-accounts.js';
+import {onRequestPost as groupSave} from '../functions/api/account-groups.js';
 import {onRequestPost as confirmIdentity} from '../functions/api/connectors/account-confirm.js';
 
 const secret='test-task-secret-012345678901234567890';
@@ -30,14 +30,16 @@ async function fixture(){
 test('fixed groups dispatch a saved account without claiming it is current; verified identity replaces the current session',async()=>{
   const {db,env,agent,queue}=await fixture();
   try{
-    const value={account_id:'other',device_id:'phone',xhs_number:'saved-other',saved_login_confirmed:true};
+    const value={action:'save_group',name:'Independent group',accounts:[{account_id:'other',xhs_number:'saved-other'}]};
     assert.equal((await groupSave({env,request:request(value,false,'bad')})).status,401);
-    assert.equal((await groupSave({env,request:request({...value,saved_login_confirmed:false})})).status,400);
-    assert.equal((await groupSave({env,request:request(value)})).status,200);
+    const group=await(await groupSave({env,request:request(value)})).json();
+    const binding={action:'bind_device',device_id:'phone',mode:'group',group_id:group.id,saved_login_confirmed:true};
+    assert.equal((await groupSave({env,request:request({...binding,saved_login_confirmed:false})})).status,400);
+    assert.equal((await groupSave({env,request:request(binding)})).status,200);
     assert.equal(db.prepare("SELECT account_id FROM account_device_sessions WHERE status='active'").get().account_id,'account');
     await agent({action:'heartbeat'});
     const {response}=await queue({account_id:'other'});assert.equal(response.status,201);
-    assert.equal((await groupSave({env,request:request({...value,action:'remove'})})).status,409);
+    assert.equal((await groupSave({env,request:request({action:'bind_device',device_id:'phone',mode:'none'})})).status,409);
     const task=(await(await agent({action:'claim'})).json()).task;
     assert.equal(task.snapshot.xhs_number,'saved-other');
     const proof={run_id:task.id,lease_token:task.lease_token,xhs_number:'wrong'};
@@ -46,6 +48,37 @@ test('fixed groups dispatch a saved account without claiming it is current; veri
     assert.equal(db.prepare("SELECT account_id FROM account_device_sessions WHERE status='active'").get().account_id,'other');
     assert.equal((await confirmIdentity({env,request:request({...proof,xhs_number:'saved-other'},true)})).status,200);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM account_device_sessions WHERE status='active'").get().n,1);
+  }finally{db.close();}
+});
+
+test('independent account groups survive device unbinding and devices can bind a whole group or a single account atomically',async()=>{
+  const {db,env,agent,queue}=await fixture();
+  try{
+    const save=async data=>groupSave({env,request:request(data)});
+    const created=await save({action:'save_group',name:'Test group',accounts:[{account_id:'account',xhs_number:'number-one'},{account_id:'other',xhs_number:'number-two'}]});
+    assert.equal(created.status,200);const groupId=(await created.json()).id;
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM device_account_members').get().n,0);
+    const bind={action:'bind_device',device_id:'phone',mode:'group',group_id:groupId,saved_login_confirmed:true};
+    assert.equal((await save(bind)).status,200);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM device_account_members').get().n,2);
+    const changed=await save({action:'save_group',group_id:groupId,name:'Renamed independent group',accounts:[{account_id:'other',xhs_number:'number-two'}],saved_login_confirmed:true});
+    assert.equal(changed.status,200);
+    assert.deepEqual(db.prepare('SELECT account_id FROM device_account_members').all().map(a=>a.account_id),['other']);
+    await agent({action:'heartbeat'});assert.equal((await queue()).response.status,409);
+    assert.equal((await save({action:'delete_group',group_id:groupId})).status,409);
+    db.prepare(`INSERT INTO devices(id,name,connector_id,device_ref)VALUES('second','Second','local-adb','second-ref')`).run();
+    assert.equal((await save({...bind,device_id:'second'})).status,409);
+    assert.equal((await save({action:'bind_device',device_id:'second',mode:'account',account_id:'other',saved_login_confirmed:true})).status,409);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM device_account_bindings WHERE device_id='second'").get().n,0);
+    assert.equal(db.prepare('SELECT device_id FROM device_account_members').get().device_id,'phone');
+    assert.equal((await save({action:'bind_device',device_id:'phone',mode:'none'})).status,200);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM account_groups').get().n,1);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM account_group_members').get().n,1);
+    assert.equal((await save({action:'bind_device',device_id:'phone',mode:'account',account_id:'account',saved_login_confirmed:true})).status,200);
+    assert.equal(db.prepare('SELECT account_id FROM device_account_bindings').get().account_id,'account');
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM device_account_members').get().n,1);
+    assert.equal((await save({action:'delete_group',group_id:groupId})).status,200);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM account_login_identities').get().n,2);
   }finally{db.close();}
 });
 

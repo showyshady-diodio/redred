@@ -24,6 +24,8 @@ export async function onRequestPost({env,request}){
   if(!account)return json({error:'所选账号未在此设备确认登录；请先完成手工登录并绑定。'},409);
   const fixed=await env.DB.prepare('SELECT device_id FROM device_account_members WHERE account_id=?').bind(account.id).first();
   if(fixed&&fixed.device_id!==device.id)return json({error:'该账号已固定到其他设备。'},409);
+  const binding=await env.DB.prepare('SELECT device_id FROM device_account_bindings WHERE device_id=?').bind(device.id).first();
+  if(binding&&!fixed)return json({error:'请选择设备所绑定账号组内的账号，或所绑定的单个账号。'},409);
   await expireTaskRuns(env.DB,device.connector_id);
   const worker=await env.DB.prepare('SELECT last_seen_at FROM task_workers WHERE connector_id=?').bind(device.connector_id).first();
   const computer=await env.DB.prepare('SELECT enabled FROM device_connectors WHERE id=?').bind(device.connector_id).first();
